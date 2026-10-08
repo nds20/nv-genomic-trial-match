@@ -1,2 +1,14 @@
 # Google App Engine generated folder
 appengine-generated/
+
+
+
+.venv/
+__pycache__/
+*.pyc
+.env
+data/*.json
+data/*.parquet
+
+
+
