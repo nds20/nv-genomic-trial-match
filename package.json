@@ -1,0 +1,19 @@
+{
+  "name": "nv-genomic-trial-match",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Precision oncology clinical trial matching prototype",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "demo": "node index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@azure/cosmos": "^4.3.0",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "multer": "^2.0.2"
+  }
+}

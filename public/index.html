@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Explore potential clinical trial matches from a biomarker list.">
+  <link rel="stylesheet" href="/styles.css">
+  <title>Genomic Trial Match</title>
+</head>
+<body>
+  <header>
+    <h1>Genomic Trial Match</h1>
+    <p>Compare a biomarker list with the available trial catalog.</p>
+  </header>
+  <main>
+    <section class="panel notice" aria-label="Important privacy and medical notice">
+      <strong>Prototype with strict input limits.</strong>
+      Upload only a list of biomarker symbols (one per line or a JSON <code>biomarkers</code> array).
+      Free text and patient details are rejected. Do not upload patient records or identifiable health
+      information. This prototype does not certify HIPAA compliance, determine eligibility, or provide
+      medical advice. Confirm all results with a qualified clinical team.
+    </section>
+    <section class="panel">
+      <form id="upload-form" class="upload">
+        <label for="research">Biomarker list (.txt, .csv, .tsv or .json; max 5 MB)</label>
+        <input id="research" name="research" type="file" accept=".txt,.csv,.tsv,.json" required>
+        <button id="submit" type="submit">Find potential matches</button>
+      </form>
+      <p id="error" role="alert"></p>
+      <div id="results" aria-live="polite"></div>
+    </section>
+  </main>
+  <script src="/app.js" defer></script>
+</body>
+</html>

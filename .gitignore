@@ -7,8 +7,9 @@ appengine-generated/
 __pycache__/
 *.pyc
 .env
+node_modules/
 data/*.json
 data/*.parquet
-
+!data/trials.json
 
 

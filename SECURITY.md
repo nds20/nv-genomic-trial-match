@@ -1,21 +1,13 @@
-# Security Policy
+# Security policy
 
-## Supported Versions
+## Project status
 
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
+This repository is an early-stage prototype. It is not intended to receive protected health information (PHI) and is not HIPAA certified. Do not use it to store or process real patient records.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.1.x   | :white_check_mark: |
-| 5.0.x   | :x:                |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
+The upload engine accepts a strict biomarker-list format, limits uploads to 5 MB, rejects free text and extra fields, does not persist uploads, and applies a process-local upload limit. These controls are not a substitute for authentication, an organizational risk analysis, a business associate agreement, or the administrative, physical, and technical safeguards required for a production healthcare service.
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-Use this section to tell people how to report a vulnerability.
+Please do not include patient information, credentials, or other sensitive data in a report. If private vulnerability reporting is enabled for this repository, use the repository's **Security** tab to submit a report. Otherwise, contact the repository maintainers privately before opening a public issue.
 
-Tell them where to go, how often they can expect to get an update on a
-reported vulnerability, what to expect if the vulnerability is accepted or
-declined, etc.
+Reports should include the affected version or commit, impact, and steps to reproduce using non-sensitive test data. The maintainers will acknowledge reports as soon as practical and coordinate any public disclosure after a fix is available.

@@ -1,0 +1,6 @@
+[
+  { "id": "T-001", "name": "Lung Cancer Study", "requiredBiomarkers": ["EGFR"] },
+  { "id": "T-002", "name": "Breast Cancer Study", "requiredBiomarkers": ["BRCA1"] },
+  { "id": "T-003", "name": "NSCLC Targeted Therapy", "requiredBiomarkers": ["EGFR", "ALK"] },
+  { "id": "T-004", "name": "Colorectal KRAS/BRAF Study", "requiredBiomarkers": ["KRAS", "BRAF"] }
+]
