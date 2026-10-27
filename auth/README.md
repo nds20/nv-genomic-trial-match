@@ -114,44 +114,61 @@ platform hardens.
 
 | Environment variable | Purpose | Default |
 | --- | --- | --- |
-| `SESSION_SECRET` | HMAC key for session tokens (≥16 chars, **required**) | — |
+| `SESSION_SECRET` | HMAC key for session tokens (≥16 chars) | Random per-boot secret + warning when unset (sessions do not survive restarts) |
 | `INVITE_TTL_HOURS` | Invite lifetime | `72` |
 | `AUTH_STORE_FILE` | JSON store location | `data/auth-store.json` (git-ignored by the repo's `data/*.json` rule) |
 | `AUTH_ISSUER` | Name shown in authenticator apps | `Biometric Screening Research` |
 | `SESSION_COOKIE_NAME` | Session cookie name | `bsr_session` |
 
-## Mounting into `server.js` (next step — not yet wired)
+## Mounted into `server.js`
 
-This PR adds the service layer and its tests; it does **not** change
-`server.js`. The intended wiring is a thin HTTP adapter, e.g.:
+The service layer is wired into the running server through a thin HTTP
+adapter in `server.js` (the app is built by an exported `createApp(authService)`
+factory, which is also how the integration tests inject a service backed
+by a temporary store). All rules stay in this module; the routes only
+translate HTTP ↔ service calls. `AuthError`s are mapped by the server's
+error middleware to `{ error, code }` JSON with the error's HTTP status.
 
-```js
-const { createAuthService } = require('./auth');
-const { roles } = require('./auth');
+| Route | Who | What it does |
+| --- | --- | --- |
+| `POST /api/auth/invites` | admin | Create an invite; returns the raw token **once**, plus a `registrationPath` |
+| `GET /api/auth/invites` | admin | List invites (hashes never leave the store) |
+| `POST /api/auth/register` | invite holder | Register (invite token required; role comes from the invite, never from the request body) |
+| `POST /api/auth/mfa/enroll` | pending account (email + password) | Begin TOTP enrollment; returns the secret + `otpauth://` URI |
+| `POST /api/auth/mfa/confirm` | pending account (email + password) | Confirm enrollment with a live TOTP code |
+| `POST /api/auth/login` | active/pending account | Password + TOTP → session token in an httpOnly `Set-Cookie` |
+| `POST /api/auth/logout` | signed-in user | Revoke the current session and clear the cookie |
+| `GET /api/auth/me` | signed-in user | Current account (public view — no hash/secret) |
+| `GET /api/auth/users` | admin | List accounts (public view) |
+| `POST /api/auth/users/:id/approve` | admin | Activate an account (refused until MFA is confirmed) |
+| `POST /api/auth/users/:id/suspend` | admin | Suspend an account |
+| `POST /api/submissions` | doctor/admin | Create a submission — always lands as `pending_review` |
+| `GET /api/submissions` | doctor/admin | List my submissions |
+| `GET /api/submissions/:id` | owner / reviewer / admin | Fetch one submission |
+| `PATCH /api/submissions/:id` | owner / admin | Edit (versions; re-enters review if it was approved) |
+| `DELETE /api/submissions/:id` | owner / admin | Soft-delete |
+| `GET /api/review-queue` | reviewer/admin | List submissions awaiting review |
+| `POST /api/review-queue/:id/approve` | reviewer/admin | Approve into the live dataset |
+| `POST /api/review-queue/:id/reject` | reviewer/admin | Reject (a note is required) |
 
-const auth = createAuthService(); // throws if SESSION_SECRET is unset
+MFA enrollment is identified by email + password rather than a session
+cookie because login itself requires a confirmed TOTP code — a pending
+account cannot hold a session yet. Credential endpoints (`register`,
+`login`, `mfa/*`) are rate-limited (50 attempts / 15 min per IP) via the
+repo's `express-rate-limit`, alongside `helmet` and the global
+`Cache-Control: no-store`.
 
-app.post('/api/auth/invites', /* admin session + role check */, async (req, res) => {
-    const { invite, token } = await auth.invites.createInvite({ createdBy: req.user.id, email: req.body.email });
-    res.json({ inviteId: invite.id, registrationPath: `/register?invite=${token}` });
-});
+`SESSION_SECRET` behavior: when set to at least 16 characters it keys the
+session HMAC. When missing or too short, `server.js` generates a random
+per-boot secret and logs a warning instead of refusing to start; every
+restart then invalidates all sessions. Set it for any real deployment.
 
-app.post('/api/auth/register', async (req, res) => res.json(await auth.users.register(req.body)));
-app.post('/api/auth/login', async (req, res) => {
-    const { token, user } = await auth.login(req.body.email, req.body.password, req.body.totpCode);
-    res.set('Set-Cookie', require('./auth/session').sessionCookie(token));
-    res.json({ user });
-});
-
-const requireActive = roles.authenticate(auth.resolveSessionUser.bind(auth));
-app.post('/api/submissions', requireActive, async (req, res) =>
-    res.status(201).json(await auth.submissions.createSubmission(req.user, req.body)));
-app.get('/api/review-queue', requireActive, roles.authorize('reviewer', 'admin'), async (req, res) =>
-    res.json(await auth.submissions.listPendingReview(req.user)));
-```
-
-Map `AuthError.status`/`AuthError.code` to HTTP responses in the existing
-error-handling middleware.
+Integration tests for the adapter live in `server.auth.test.js` (repo
+root): they boot the app on an ephemeral port with a temp-file store and
+a stubbed NPPES lookup and drive the full journey over HTTP, plus the
+negative cases (401 unauthenticated, 403 for a doctor on the review
+queue, wrong-TOTP and wrong-password logins, registration without an
+invite, rejection without a note).
 
 ## Prototype limits (honest list)
 
@@ -168,9 +185,13 @@ error-handling middleware.
 - **Not HIPAA-compliant as-is** and not a clinical system: submissions are
   research metadata (biomarkers, cancer type, summaries). Do not submit
   patient records or PHI.
-- Rate limiting, CSRF tokens for cookie-authenticated POSTs, and login
-  attempt throttling should reuse the repo's existing `helmet` /
-  `express-rate-limit` setup when the HTTP adapter lands.
+- CSRF tokens for cookie-authenticated POSTs are not yet implemented
+  (the session cookie is `SameSite=Lax`, which blunts — but does not
+  eliminate — the risk); login/registration rate limiting is in place via
+  the server's `express-rate-limit` setup.
+- **The `frontend/` UI does not call these APIs yet.** Wiring the React
+  front end to `/api/auth` and `/api/submissions` is the next integration
+  step.
 
 ## Tests
 
@@ -185,3 +206,6 @@ protection, the full happy path (invite → register → MFA → approve →
 login → submit → approve → live), abuse cases (pending account submitting,
 doctor reviewing, forced-`approved` create), self-review refusal,
 versioning/soft-delete/audit behavior, and session tamper/revocation.
+
+HTTP-level integration tests for the `server.js` adapter are in
+`server.auth.test.js` at the repo root (run everything with `npm test`).

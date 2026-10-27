@@ -10,11 +10,11 @@ Three pieces, one repo:
 
 | Piece | Where | What it does |
 | --- | --- | --- |
-| Matching engine | `engine/` + `server.js` | The original Lenhard AI engine: accepts a biomarker list, compares it with trial criteria (local sample catalog or Azure Cosmos DB), and ranks matching trials. This is the only piece wired into the running server today. |
-| Clinician front end | `frontend/` | The Oncology Biomarker Matcher React UI (added in PR #2): research upload, the matching pipeline view, biomarker results across 16 cancer-type libraries, and a patient-summary export. Runs on demo data; **not yet wired to the engine API**. |
-| Accounts & submissions | `auth/` | Doctor login and research submission flow: invite-only accounts, NPI verification, mandatory MFA, role-based review queue, audit trail. A self-contained service layer with tests; **not yet mounted into `server.js`** (the HTTP adapter is the next step — see `auth/README.md`). |
+| Matching engine | `engine/` + `server.js` | The original Lenhard AI engine: accepts a biomarker list, compares it with trial criteria (local sample catalog or Azure Cosmos DB), and ranks matching trials. Wired into the running server. |
+| Clinician front end | `frontend/` | The Oncology Biomarker Matcher React UI (added in PR #2): research upload, the matching pipeline view, biomarker results across 16 cancer-type libraries, and a patient-summary export. Runs on demo data; **not yet wired to the engine or auth APIs**. |
+| Accounts & submissions | `auth/` + routes in `server.js` | Doctor login and research submission flow: invite-only accounts, NPI verification, mandatory MFA, role-based review queue, audit trail. The service layer is **mounted into `server.js`**: REST routes under `/api/auth` and `/api/submissions` run the full flow (see `auth/README.md` for the route table). |
 
-How they fit together once integration lands: a doctor signs in through `auth/`, uploads research in the `frontend/` UI, the submission waits in the review queue until a reviewer approves it, and only approved research reaches the engine's dataset.
+How they fit together: a doctor signs in through `auth/`, submits research (today via the API; the `frontend/` UI still runs on demo data — wiring it to these APIs is the next integration step), the submission waits in the review queue until a reviewer approves it, and only approved research reaches the engine's dataset.
 
 ## Run locally
 
@@ -53,9 +53,11 @@ The access-control layer that keeps unverified accounts from messing up the data
 - **Review queue.** Every submission lands as `pending_review`. Only a reviewer's approval puts it into the live dataset, and editing an approved submission sends it back through review.
 - **Audit trail, versioning, soft deletes.** Every mutation appends to an append-only audit log; edits bump a version counter and archive the prior content instead of overwriting; deletes only set a flag — records are retained.
 
-Configuration: `SESSION_SECRET` (required, at least 16 characters), `INVITE_TTL_HOURS` (default 72), `AUTH_STORE_FILE` (default `data/auth-store.json`), `AUTH_ISSUER`, `SESSION_COOKIE_NAME`. Run its tests with `node --test auth/auth.test.js` (or `npm test` for the whole repo).
+Configuration: `SESSION_SECRET` (at least 16 characters; when unset the server generates a random per-boot secret and warns — sessions then die on restart, so set it for real deployments), `INVITE_TTL_HOURS` (default 72), `AUTH_STORE_FILE` (default `data/auth-store.json`), `AUTH_ISSUER`, `SESSION_COOKIE_NAME`. Run its tests with `node --test auth/auth.test.js` (or `npm test` for the whole repo).
 
-Prototype limits, honestly stated: the store is a single JSON file (its interface is shaped so Azure Cosmos containers can replace it); invite delivery is manual — an admin shares the registration link, no email service is wired yet; the state license is collected but verified by the approving admin, not yet against state board databases; and the module is **not yet mounted into `server.js`** — `auth/README.md` sketches the thin HTTP adapter that will connect it.
+Mounted in `server.js`: REST routes under `/api/auth` (invites, register, MFA enroll/confirm, login/logout, me, admin user approval) and `/api/submissions` + `/api/review-queue` (create/list/edit/soft-delete, reviewer approve/reject), with the facade's role guards enforced and `AuthError` codes mapped to HTTP responses. The full route table is in `auth/README.md`; HTTP integration tests are in `server.auth.test.js`.
+
+Prototype limits, honestly stated: the store is a single JSON file (its interface is shaped so Azure Cosmos containers can replace it); invite delivery is manual — an admin shares the registration link, no email service is wired yet; the state license is collected but verified by the approving admin, not yet against state board databases. Remaining integration: wiring the `frontend/` UI to these APIs is the next PR.
 
 ## Set up Azure Cosmos DB
 
@@ -105,7 +107,7 @@ The prototype accepts only UTF-8 `.txt`, `.csv`, `.tsv`, or `.json` biomarker li
 
 Uploads are held in memory for processing and are not stored or logged by this app. The engine rejects content outside this narrow format, caps file size, rate-limits upload attempts, and adds standard HTTP security headers. These safeguards reduce risk but cannot guarantee that data is de-identified or satisfy HIPAA by themselves.
 
-**Do not upload real patient information or protected health information.** The running server has no user authentication or clinical audit workflow wired in yet — the `auth/` module in this repo implements both but is not yet mounted into `server.js` — and the platform has no HIPAA compliance certification. Before use with real clinical data, the deployment needs a documented risk analysis and appropriate administrative, physical, and technical safeguards, including identity/access management, an appropriate business associate agreement and Azure configuration, operational monitoring, and review by qualified privacy/compliance counsel. The matching output is for research exploration only; it is not proof of eligibility or medical advice.
+**Do not upload real patient information or protected health information.** The `auth/` module is now mounted into `server.js`, so doctor accounts, login and the submission review queue are live; the anonymous demo endpoints (`/api/upload`, `/api/trials`) remain unauthenticated and accept only de-identified biomarker lists. The platform has no HIPAA compliance certification. Before use with real clinical data, the deployment needs a documented risk analysis and appropriate administrative, physical, and technical safeguards, including identity/access management, an appropriate business associate agreement and Azure configuration, operational monitoring, and review by qualified privacy/compliance counsel. The matching output is for research exploration only; it is not proof of eligibility or medical advice.
 
 ## Verify
 
