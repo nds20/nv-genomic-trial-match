@@ -1,0 +1,8 @@
+{
+  "runtime": "typescript",
+  "platformVersion": 25,
+  "entry": "client/dist/index.html",
+  "name": "Oncology Biomarker Matcher",
+  "slug": "oncology-biomarker-matcher",
+  "managedCronJobs": []
+}

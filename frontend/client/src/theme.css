@@ -1,0 +1,91 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+@import "tailwindcss-safe-area";
+
+@theme {
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 14px;
+  --text-sm--line-height: 20px;
+  --text-base: 16px;
+  --text-base--line-height: 24px;
+  --text-lg: 18px;
+  --text-lg--line-height: 28px;
+  --text-xl: 20px;
+  --text-xl--line-height: 28px;
+  --text-2xl: 24px;
+  --text-2xl--line-height: 32px;
+  --text-3xl: 30px;
+  --text-3xl--line-height: 36px;
+}
+
+:root {
+  color-scheme: light dark;
+  --bg: #eef2ef;
+  --surface: #ffffff;
+  --surface2: #f3f6f3;
+  --text: #0b1220;
+  --dim: #64746d;
+  --border: #d9e2dc;
+  --accent: #0f766e;
+  --accent2: #0b1220;
+  --amber: #d97706;
+  --rose: #be123c;
+  --radius: 14px;
+  --space-surface: var(--surface);
+  --space-surface-alt: var(--surface2);
+  --space-muted: var(--dim);
+  --space-border: var(--border);
+  --space-accent: var(--accent);
+  --font-display: "Space Grotesk", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --header-bg: #0B1220;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0a0f0d;
+    --surface: #121a17;
+    --surface2: #18211d;
+    --text: #eef4f0;
+    --dim: #8aa398;
+    --border: #24332c;
+    --accent: #2dd4bf;
+    --accent2: #e2e8f0;
+    --header-bg: #070d18;
+  }
+}
+/* Forced Clinical Dark — darker, high-contrast, navy/teal clinical theme */
+:root[data-theme="clinical-dark"] {
+  color-scheme: dark;
+  --bg: #04070d;
+  --surface: #0a1424;
+  --surface2: #0e1c33;
+  --text: #e8f0fe;
+  --dim: #8aa0b8;
+  --border: #1e3653;
+  --accent: #2dd4bf;
+  --accent2: #e8f0fe;
+  --header-bg: #02040a;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eef2ef;
+  --surface: #ffffff;
+  --surface2: #f3f6f3;
+  --text: #0b1220;
+  --dim: #64746d;
+  --border: #d9e2dc;
+  --accent: #0f766e;
+  --header-bg: #0B1220;
+}
+body { font-family: var(--font-display); background: var(--bg); color: var(--text); }
+.font-mono2 { font-family: var(--font-mono); }
+
+/* Clinical dark extra polish */
+:root[data-theme="clinical-dark"] body { background: radial-gradient(1200px 600px at 20% -10%, rgba(45,212,191,0.08), transparent 60%), var(--bg); }
+
+@media print {
+  body { background: white !important; }
+  .no-print { display: none !important; }
+  #patient-summary-print { display: block !important; position: static !important; box-shadow: none !important; border: none !important; }
+}
