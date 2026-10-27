@@ -2,6 +2,20 @@
 
 An early-stage prototype for comparing a biomarker list with clinical trial criteria. It is not a clinical decision-support system and is not certified as HIPAA compliant.
 
+## The platform: biometricscreeningresearch.net
+
+This repository is growing from the NV Genomic Trial Match prototype into the **precision oncology / biometric screening research platform** launching at **biometricscreeningresearch.net**. The goal: verified doctors submit biomarker screening research, reviewers vet it, and approved research feeds the matching engine that connects biomarker findings to clinical trials — without ever letting unvetted accounts or unreviewed data in.
+
+Three pieces, one repo:
+
+| Piece | Where | What it does |
+| --- | --- | --- |
+| Matching engine | `engine/` + `server.js` | The original Lenhard AI engine: accepts a biomarker list, compares it with trial criteria (local sample catalog or Azure Cosmos DB), and ranks matching trials. This is the only piece wired into the running server today. |
+| Clinician front end | `frontend/` | The Oncology Biomarker Matcher React UI (added in PR #2): research upload, the matching pipeline view, biomarker results across 16 cancer-type libraries, and a patient-summary export. Runs on demo data; **not yet wired to the engine API**. |
+| Accounts & submissions | `auth/` | Doctor login and research submission flow: invite-only accounts, NPI verification, mandatory MFA, role-based review queue, audit trail. A self-contained service layer with tests; **not yet mounted into `server.js`** (the HTTP adapter is the next step — see `auth/README.md`). |
+
+How they fit together once integration lands: a doctor signs in through `auth/`, uploads research in the `frontend/` UI, the submission waits in the review queue until a reviewer approves it, and only approved research reaches the engine's dataset.
+
 ## Run locally
 
 Requires Node.js 18 or newer.
@@ -12,6 +26,36 @@ npm start
 ```
 
 Open `http://localhost:3000`. With no Cosmos DB settings, the app uses the sample catalog in `data/trials.json`.
+
+## Front end: Oncology Biomarker Matcher (`frontend/`)
+
+A React + TypeScript UI (with a small Bun/TypeScript server layer) that began as a hosted web artifact and landed here as a source snapshot in PR #2. Full details live in `frontend/README.md`; in short it provides:
+
+- **Research upload and case intake** — de-identified case creation (cancer type, stage, histology, assay); drag-and-drop or browse for NGS reports, PDFs, and VCFs, or load sample files.
+- **AI matching pipeline view** — a four-step visualization: Ingest → Extract → Cross-Reference → Rank.
+- **Biomarker results** — cards (variant, VAF, classification, AI confidence, evidence level, matched therapy, trial count) across **16 cancer-type libraries (plus Rare)**, with a case filter and coverage grid, plus a therapy ranking table for tumor-board review.
+- **Clinical Dark theme** — Auto / Light / Clinical Dark toggle (persisted), with a deep navy-black, high-contrast palette.
+- **Patient-summary export** — a plain-language per-case summary with Copy, Download .txt, Download .html, and Print/PDF actions.
+
+Status and caveats:
+
+- The UI currently runs on its own **demo data** and is labeled throughout as a demo mockup, **not for clinical use**. It is **not yet wired to this repo's engine API** (`/api/trials`, `/api/upload`); connecting the two is an integration step still to come.
+- Its `package.json` depends on `@hatch/space-sdk` via a local `file:` path from the original hosted runtime. That package is not published and is not in this repository, so a standalone install fails until the dependency is replaced or stubbed; the snapshot is here for review and porting. In its original runtime it was built with Bun 1.3: `bun install`, `bun run build`, `bun run typecheck` (run inside `frontend/`).
+
+## Doctor accounts and research submissions (`auth/`)
+
+The access-control layer that keeps unverified accounts from messing up the data. Plain Node.js (CommonJS), `node:crypto` only, no new dependencies. The full design document is `auth/README.md`.
+
+- **Invite-only accounts.** No public sign-up: an admin issues a single-use, expiring invite (only its SHA-256 hash is stored), and registration is impossible without one.
+- **NPI verification.** Registrants provide an NPI and a state license number/state. The NPI is checked locally (format + the CMS Luhn rule) and against the public **NPPES** registry API, including a rough name match. A registry outage degrades the account to manual review — never to approval.
+- **Mandatory MFA.** TOTP (RFC 6238) enrollment *and* confirmation are required before an admin can activate an account. Login is password (scrypt-hashed, per-user salt) + TOTP, with replay protection; sessions are signed, expiring, revocable tokens designed for httpOnly cookies.
+- **Roles.** `doctor` submits research and manages only their own submissions; `reviewer` approves/rejects submissions; `admin` manages invites and accounts. Nobody can review their own submission.
+- **Review queue.** Every submission lands as `pending_review`. Only a reviewer's approval puts it into the live dataset, and editing an approved submission sends it back through review.
+- **Audit trail, versioning, soft deletes.** Every mutation appends to an append-only audit log; edits bump a version counter and archive the prior content instead of overwriting; deletes only set a flag — records are retained.
+
+Configuration: `SESSION_SECRET` (required, at least 16 characters), `INVITE_TTL_HOURS` (default 72), `AUTH_STORE_FILE` (default `data/auth-store.json`), `AUTH_ISSUER`, `SESSION_COOKIE_NAME`. Run its tests with `node --test auth/auth.test.js` (or `npm test` for the whole repo).
+
+Prototype limits, honestly stated: the store is a single JSON file (its interface is shaped so Azure Cosmos containers can replace it); invite delivery is manual — an admin shares the registration link, no email service is wired yet; the state license is collected but verified by the approving admin, not yet against state board databases; and the module is **not yet mounted into `server.js`** — `auth/README.md` sketches the thin HTTP adapter that will connect it.
 
 ## Set up Azure Cosmos DB
 
@@ -61,7 +105,7 @@ The prototype accepts only UTF-8 `.txt`, `.csv`, `.tsv`, or `.json` biomarker li
 
 Uploads are held in memory for processing and are not stored or logged by this app. The engine rejects content outside this narrow format, caps file size, rate-limits upload attempts, and adds standard HTTP security headers. These safeguards reduce risk but cannot guarantee that data is de-identified or satisfy HIPAA by themselves.
 
-**Do not upload real patient information or protected health information.** This prototype has no user authentication, clinical audit workflow, or HIPAA compliance certification. Before use with real clinical data, the deployment needs a documented risk analysis and appropriate administrative, physical, and technical safeguards, including identity/access management, an appropriate business associate agreement and Azure configuration, operational monitoring, and review by qualified privacy/compliance counsel. The matching output is for research exploration only; it is not proof of eligibility or medical advice.
+**Do not upload real patient information or protected health information.** The running server has no user authentication or clinical audit workflow wired in yet — the `auth/` module in this repo implements both but is not yet mounted into `server.js` — and the platform has no HIPAA compliance certification. Before use with real clinical data, the deployment needs a documented risk analysis and appropriate administrative, physical, and technical safeguards, including identity/access management, an appropriate business associate agreement and Azure configuration, operational monitoring, and review by qualified privacy/compliance counsel. The matching output is for research exploration only; it is not proof of eligibility or medical advice.
 
 ## Verify
 
