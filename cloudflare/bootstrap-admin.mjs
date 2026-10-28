@@ -8,23 +8,46 @@
 // commit either value.
 //
 // Required environment variables:
-//   BOOTSTRAP_ADMIN_NAME, BOOTSTRAP_ADMIN_EMAIL, BOOTSTRAP_ADMIN_PASSWORD,
+//   BOOTSTRAP_ADMIN_NAME, BOOTSTRAP_ADMIN_EMAIL, BOOTSTRAP_ADMIN_PASSWORD
+//
+// Optional as a group:
 //   BOOTSTRAP_ADMIN_NPI, BOOTSTRAP_ADMIN_LICENSE_NUMBER,
 //   BOOTSTRAP_ADMIN_LICENSE_STATE
-// Optional: BOOTSTRAP_NPI_VERIFICATION ('manual_review' by default)
+// The operator who runs this one-time bootstrap is the platform's
+// founder/administrator, not a clinician, so the NPI/license gate that
+// applies to DOCTOR accounts does not apply to this account. Either set
+// all three variables or omit all three; setting only some of them is an
+// error. When all three are omitted, the admin row is created with NULL
+// clinical fields and npi_verification 'operator_exempt'. When all three
+// are set, they are validated exactly as before. Doctor accounts created
+// afterwards through the normal invite flow still require full NPI
+// verification — this exemption exists only in this operator bootstrap.
+// Optional: BOOTSTRAP_NPI_VERIFICATION ('manual_review' by default; only
+// used when the NPI/license group above is provided)
 
 import { pbkdf2Sync, randomBytes } from 'node:crypto';
 
 const required = [
   'BOOTSTRAP_ADMIN_NAME', 'BOOTSTRAP_ADMIN_EMAIL', 'BOOTSTRAP_ADMIN_PASSWORD',
-  'BOOTSTRAP_ADMIN_NPI', 'BOOTSTRAP_ADMIN_LICENSE_NUMBER', 'BOOTSTRAP_ADMIN_LICENSE_STATE',
 ];
 for (const name of required) {
   if (!process.env[name]) throw new Error(`Set ${name} before running this script.`);
 }
 if (process.env.BOOTSTRAP_ADMIN_PASSWORD.length < 12) throw new Error('BOOTSTRAP_ADMIN_PASSWORD must be at least 12 characters.');
-if (!/^\d{10}$/.test(process.env.BOOTSTRAP_ADMIN_NPI)) throw new Error('BOOTSTRAP_ADMIN_NPI must be 10 digits.');
-if (!/^[A-Z]{2}$/.test(process.env.BOOTSTRAP_ADMIN_LICENSE_STATE)) throw new Error('BOOTSTRAP_ADMIN_LICENSE_STATE must be a 2-letter state code.');
+
+const clinicalVars = [
+  'BOOTSTRAP_ADMIN_NPI', 'BOOTSTRAP_ADMIN_LICENSE_NUMBER', 'BOOTSTRAP_ADMIN_LICENSE_STATE',
+];
+const providedClinical = clinicalVars.filter((name) => process.env[name]);
+if (providedClinical.length > 0 && providedClinical.length < clinicalVars.length) {
+  const missingClinical = clinicalVars.filter((name) => !process.env[name]);
+  throw new Error(`BOOTSTRAP_ADMIN_NPI, BOOTSTRAP_ADMIN_LICENSE_NUMBER, and BOOTSTRAP_ADMIN_LICENSE_STATE must be provided together or omitted together. Missing: ${missingClinical.join(', ')}. Omit all three for an operator admin account without clinical credentials.`);
+}
+const hasClinicalCredentials = providedClinical.length === clinicalVars.length;
+if (hasClinicalCredentials) {
+  if (!/^\d{10}$/.test(process.env.BOOTSTRAP_ADMIN_NPI)) throw new Error('BOOTSTRAP_ADMIN_NPI must be 10 digits.');
+  if (!/^[A-Z]{2}$/.test(process.env.BOOTSTRAP_ADMIN_LICENSE_STATE)) throw new Error('BOOTSTRAP_ADMIN_LICENSE_STATE must be a 2-letter state code.');
+}
 
 const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 function base32(bytes) {
@@ -45,9 +68,17 @@ const passwordHash = ['pbkdf2-sha256', iterations, salt.toString('base64'), deri
 const totpSecret = base32(randomBytes(20));
 const id = `usr_${crypto.randomUUID()}`;
 const now = new Date().toISOString();
-const npiVerification = process.env.BOOTSTRAP_NPI_VERIFICATION || 'manual_review';
+const npiVerification = hasClinicalCredentials
+  ? (process.env.BOOTSTRAP_NPI_VERIFICATION || 'manual_review')
+  : 'operator_exempt';
+const npiVerificationDetail = hasClinicalCredentials
+  ? 'Bootstrap account created by the database operator.'
+  : 'Bootstrap operator account; admin role does not require clinical NPI/license.';
+const npiSql = hasClinicalCredentials ? sql(process.env.BOOTSTRAP_ADMIN_NPI) : 'NULL';
+const licenseNumberSql = hasClinicalCredentials ? sql(process.env.BOOTSTRAP_ADMIN_LICENSE_NUMBER) : 'NULL';
+const licenseStateSql = hasClinicalCredentials ? sql(process.env.BOOTSTRAP_ADMIN_LICENSE_STATE) : 'NULL';
 
 console.log('-- Paste this one statement into the oncology-db D1 console. It creates an ACTIVE, MFA-confirmed admin.');
-console.log(`INSERT INTO users (id, name, email, password_hash, npi, license_number, license_state, role, status, npi_verification, npi_verification_detail, totp_secret, mfa_confirmed_at, last_totp_counter, approved_by, approved_at, created_at, updated_at) VALUES (${sql(id)}, ${sql(process.env.BOOTSTRAP_ADMIN_NAME)}, ${sql(process.env.BOOTSTRAP_ADMIN_EMAIL.toLowerCase())}, ${sql(passwordHash)}, ${sql(process.env.BOOTSTRAP_ADMIN_NPI)}, ${sql(process.env.BOOTSTRAP_ADMIN_LICENSE_NUMBER)}, ${sql(process.env.BOOTSTRAP_ADMIN_LICENSE_STATE)}, 'admin', 'active', ${sql(npiVerification)}, 'Bootstrap account created by the database operator.', ${sql(totpSecret)}, ${sql(now)}, -1, 'bootstrap', ${sql(now)}, ${sql(now)}, ${sql(now)});`);
+console.log(`INSERT INTO users (id, name, email, password_hash, npi, license_number, license_state, role, status, npi_verification, npi_verification_detail, totp_secret, mfa_confirmed_at, last_totp_counter, approved_by, approved_at, created_at, updated_at) VALUES (${sql(id)}, ${sql(process.env.BOOTSTRAP_ADMIN_NAME)}, ${sql(process.env.BOOTSTRAP_ADMIN_EMAIL.toLowerCase())}, ${sql(passwordHash)}, ${npiSql}, ${licenseNumberSql}, ${licenseStateSql}, 'admin', 'active', ${sql(npiVerification)}, ${sql(npiVerificationDetail)}, ${sql(totpSecret)}, ${sql(now)}, -1, 'bootstrap', ${sql(now)}, ${sql(now)}, ${sql(now)});`);
 console.error(`\nTOTP secret (shown once): ${totpSecret}`);
 console.error(`Add it to your authenticator as: Biometric Screening Research:${process.env.BOOTSTRAP_ADMIN_EMAIL.toLowerCase()}`);
