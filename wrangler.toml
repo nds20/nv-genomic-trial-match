@@ -18,10 +18,5 @@ binding = "DB"
 database_name = "oncology-db"
 database_id = "b149afca-7f1b-4e1f-b95d-ea89f2326ad9"
 
-{
-  // ...
-  "observability": {
-    "enabled": false
-  },
-  // ...
-}
+[observability]
+enabled = false
