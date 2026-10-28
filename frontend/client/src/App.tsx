@@ -1,9 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, type ApiResponse } from "./api";
+import { api, type CaseRow, type CaseDetail as Detail, type PlatformUser, type Role } from "./api";
 
-type CaseRow = ApiResponse<typeof api, "listCases">["cases"][number];
-type Detail = ApiResponse<typeof api, "getCaseDetail">;
 type ThemeMode = "system" | "light" | "clinical-dark";
 
 const CANCER_TYPES = [
@@ -34,15 +32,7 @@ const CANCER_GROUPS: Record<string, string[]> = {
 const STAGES = ["Stage I", "Stage II", "Stage III", "Stage IV", "Recurrent", "Metastatic"];
 const SAMPLE_TYPES = ["Tissue NGS", "Liquid Biopsy (ctDNA)", "Tissue + Liquid", "Whole Exome", "Targeted Panel (324 genes)", "Whole Genome", "RNA Sequencing"];
 
-const SAMPLE_FILES = [
-  { name: "FoundationOne_CDX_Report.pdf", kind: "NGS Report", kb: 2840 },
-  { name: "Caris_Molecular_Intelligence.pdf", kind: "NGS Report", kb: 3120 },
-  { name: "NEJM_EGFR_Resistance_2025.pdf", kind: "Research PDF", kb: 1890 },
-  { name: "variants_export.vcf", kind: "VCF File", kb: 420 },
-  { name: "Pathology_IHC_PDL1_HER2.pdf", kind: "Pathology", kb: 960 },
-  { name: "Liquid_Biopsy_Guardant360.pdf", kind: "Liquid Biopsy", kb: 1740 },
-];
-
+const SAMPLE_BIOMARKERS = ["EGFR", "ALK", "BRCA1", "KRAS", "BRAF"];
 function confidenceColor(c: number) {
   if (c >= 90) return "bg-teal-600";
   if (c >= 82) return "bg-teal-500";
@@ -79,6 +69,127 @@ function plainExplanation(gene: string, therapy: string): string {
   return map[gene] || `This finding points toward ${therapy} as an option your care team may discuss.`;
 }
 
+
+const inputClass = "mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--surface2)] px-3 py-2.5 text-sm outline-none focus:ring-2 ring-teal-600";
+const labelClass = "text-xs font-semibold tracking-wide uppercase text-[var(--dim)]";
+
+function AuthPanel({ onAuthenticated }: { onAuthenticated: () => void }) {
+  const initialInvite = (() => { try { return new URLSearchParams(window.location.search).get("invite") || ""; } catch { return ""; } })();
+  const [mode, setMode] = useState<"login" | "register" | "mfa">(initialInvite ? "register" : "login");
+  const [form, setForm] = useState({ inviteToken: initialInvite, name: "", email: "", password: "", npi: "", licenseNumber: "", licenseState: "", totpCode: "", mfaCode: "" });
+  const [mfaData, setMfaData] = useState<{ secret: string; otpauthUri: string } | null>(null);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const set = (key: keyof typeof form) => (event: React.ChangeEvent<HTMLInputElement>) => setForm(prev => ({ ...prev, [key]: event.target.value }));
+  const run = async (action: () => Promise<void>) => { setError(""); setMessage(""); try { await action(); } catch (e) { setError(e instanceof Error ? e.message : "Request failed."); } };
+
+  return (
+    <section className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-5 md:p-6 shadow-sm" aria-label="Doctor account access">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-bold">Doctor account access</h2>
+          <p className="text-sm text-[var(--dim)] mt-1 max-w-2xl">Accounts are invite-only. Registration verifies an individual NPI against NPPES, collects a state license for admin review, and requires TOTP MFA before approval.</p>
+        </div>
+        <div className="flex rounded-full border border-[var(--border)] p-1" role="group" aria-label="Account action">
+          {(["login", "register", "mfa"] as const).map(value => (
+            <button key={value} onClick={() => setMode(value)} className={`px-3 py-1.5 rounded-full text-xs font-semibold ${mode === value ? "bg-teal-700 text-white" : ""}`}>{value === "mfa" ? "Confirm MFA" : value === "login" ? "Sign in" : "Register"}</button>
+          ))}
+        </div>
+      </div>
+      {error && <p className="mt-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 px-4 py-3 text-sm" role="alert">{error}</p>}
+      {message && <p className="mt-4 rounded-xl bg-teal-50 border border-teal-200 text-teal-900 px-4 py-3 text-sm">{message}</p>}
+
+      {mode === "login" && (
+        <form className="grid md:grid-cols-3 gap-3 mt-5" onSubmit={e => { e.preventDefault(); void run(async () => { await api.login(form.email, form.password, form.totpCode); onAuthenticated(); }); }}>
+          <div><label className={labelClass} htmlFor="login-email">Email</label><input id="login-email" type="email" autoComplete="email" required value={form.email} onChange={set("email")} className={inputClass} /></div>
+          <div><label className={labelClass} htmlFor="login-password">Password</label><input id="login-password" type="password" autoComplete="current-password" required value={form.password} onChange={set("password")} className={inputClass} /></div>
+          <div><label className={labelClass} htmlFor="login-totp">Authenticator code</label><input id="login-totp" inputMode="numeric" autoComplete="one-time-code" required value={form.totpCode} onChange={set("totpCode")} className={inputClass} /></div>
+          <button className="md:col-span-3 bg-teal-700 text-white font-semibold rounded-xl py-3">Sign in securely</button>
+        </form>
+      )}
+
+      {mode === "register" && (
+        <form className="grid md:grid-cols-2 gap-3 mt-5" onSubmit={e => { e.preventDefault(); void run(async () => { await api.register({ inviteToken: form.inviteToken, name: form.name, email: form.email, password: form.password, npi: form.npi, licenseNumber: form.licenseNumber, licenseState: form.licenseState.toUpperCase() }); setMessage("Account created as pending. Now enroll and confirm MFA below; an admin must approve the account before sign-in can access the workspace."); setMode("mfa"); }); }}>
+          <div className="md:col-span-2"><label className={labelClass} htmlFor="register-invite">Invite token</label><input id="register-invite" required value={form.inviteToken} onChange={set("inviteToken")} className={inputClass} /></div>
+          <div><label className={labelClass} htmlFor="register-name">Full name</label><input id="register-name" autoComplete="name" required value={form.name} onChange={set("name")} className={inputClass} /></div>
+          <div><label className={labelClass} htmlFor="register-email">Email</label><input id="register-email" type="email" autoComplete="email" required value={form.email} onChange={set("email")} className={inputClass} /></div>
+          <div><label className={labelClass} htmlFor="register-password">Password (12+ characters)</label><input id="register-password" type="password" autoComplete="new-password" required minLength={12} value={form.password} onChange={set("password")} className={inputClass} /></div>
+          <div><label className={labelClass} htmlFor="register-npi">Individual NPI</label><input id="register-npi" inputMode="numeric" required value={form.npi} onChange={set("npi")} className={inputClass} /></div>
+          <div><label className={labelClass} htmlFor="register-license">License number</label><input id="register-license" required value={form.licenseNumber} onChange={set("licenseNumber")} className={inputClass} /></div>
+          <div><label className={labelClass} htmlFor="register-state">License state</label><input id="register-state" required maxLength={2} placeholder="NY" value={form.licenseState} onChange={set("licenseState")} className={inputClass} /></div>
+          <button className="md:col-span-2 bg-[#0B1220] text-white font-semibold rounded-xl py-3">Create pending account</button>
+        </form>
+      )}
+
+      {mode === "mfa" && (
+        <div className="mt-5 space-y-4">
+          <form className="grid md:grid-cols-2 gap-3" onSubmit={e => { e.preventDefault(); void run(async () => { const data = await api.beginMfa(form.email, form.password); setMfaData(data); setMessage("Add the secret or otpauth URI to your authenticator app, then confirm a current six-digit code."); }); }}>
+            <div><label className={labelClass} htmlFor="mfa-email">Email</label><input id="mfa-email" type="email" required value={form.email} onChange={set("email")} className={inputClass} /></div>
+            <div><label className={labelClass} htmlFor="mfa-password">Password</label><input id="mfa-password" type="password" required value={form.password} onChange={set("password")} className={inputClass} /></div>
+            <button className="md:col-span-2 border border-[var(--border)] font-semibold rounded-xl py-3">1 · Begin MFA enrollment</button>
+          </form>
+          {mfaData && <div className="rounded-xl bg-[var(--surface2)] border border-[var(--border)] p-4 text-sm break-all"><p><strong>Secret:</strong> <code>{mfaData.secret}</code></p><p className="mt-2"><strong>otpauth URI:</strong> <code>{mfaData.otpauthUri}</code></p></div>}
+          <form className="flex flex-col md:flex-row gap-3" onSubmit={e => { e.preventDefault(); void run(async () => { await api.confirmMfa(form.email, form.password, form.mfaCode); setMessage("MFA confirmed. An administrator can now approve this pending account. After approval, sign in with your password and a fresh authenticator code."); setMode("login"); }); }}>
+            <div className="flex-1"><label className={labelClass} htmlFor="mfa-code">Six-digit code</label><input id="mfa-code" inputMode="numeric" required value={form.mfaCode} onChange={set("mfaCode")} className={inputClass} /></div>
+            <button className="self-end bg-teal-700 text-white font-semibold rounded-xl px-5 py-3">2 · Confirm MFA</button>
+          </form>
+        </div>
+      )}
+      <p className="text-xs text-[var(--dim)] mt-4">No account can be created without an admin-issued invite. State licenses are reviewed by the approving admin; NPPES failures degrade to manual review rather than approval.</p>
+    </section>
+  );
+}
+
+function PlatformTools({ user, onChanged }: { user: PlatformUser; onChanged: () => void }) {
+  const qcTools = useQueryClient();
+  const [tab, setTab] = useState<"submit" | "mine" | "review" | "admin">(user.role === "reviewer" ? "review" : "submit");
+  const [submission, setSubmission] = useState({ title: "", summary: "", biomarkers: "", cancerType: "", sourceUrl: "" });
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<Role>("doctor");
+  const [inviteResult, setInviteResult] = useState("");
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const mineQ = useQuery({ queryKey: ["submissions"], queryFn: api.listSubmissions, enabled: user.role === "doctor" || user.role === "admin" });
+  const reviewQ = useQuery({ queryKey: ["review-queue"], queryFn: api.listReviewQueue, enabled: user.role === "reviewer" || user.role === "admin" });
+  const usersQ = useQuery({ queryKey: ["admin-users"], queryFn: api.listUsers, enabled: user.role === "admin" });
+  const refresh = () => { qcTools.invalidateQueries({ queryKey: ["submissions"] }); qcTools.invalidateQueries({ queryKey: ["review-queue"] }); qcTools.invalidateQueries({ queryKey: ["admin-users"] }); onChanged(); };
+  const tabs = [
+    ...((user.role === "doctor" || user.role === "admin") ? [{ id: "submit" as const, label: "New submission" }, { id: "mine" as const, label: "My submissions" }] : []),
+    ...((user.role === "reviewer" || user.role === "admin") ? [{ id: "review" as const, label: `Review queue${reviewQ.data ? ` (${reviewQ.data.length})` : ""}` }] : []),
+    ...(user.role === "admin" ? [{ id: "admin" as const, label: "Admin" }] : []),
+  ];
+  return (
+    <section className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 md:p-5 no-print" aria-label="Research submissions and administration">
+      <div className="flex flex-wrap justify-between gap-3">
+        <div><h2 className="font-bold text-lg">Research & Review</h2><p className="text-xs text-[var(--dim)] mt-1">Submissions are stored in D1 and always start in pending review.</p></div>
+        <div className="flex flex-wrap gap-2">{tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} className={`text-xs font-semibold rounded-full px-3 py-2 ${tab === t.id ? "bg-teal-700 text-white" : "border border-[var(--border)]"}`}>{t.label}</button>)}</div>
+      </div>
+      {tab === "submit" && (user.role === "doctor" || user.role === "admin") && (
+        <form className="grid md:grid-cols-2 gap-3 mt-4" onSubmit={async e => { e.preventDefault(); await api.createSubmission({ title: submission.title, summary: submission.summary, biomarkers: submission.biomarkers.split(/[,\n]/).map(v => v.trim()).filter(Boolean), cancerType: submission.cancerType, sourceUrl: submission.sourceUrl || undefined }); setSubmission({ title: "", summary: "", biomarkers: "", cancerType: "", sourceUrl: "" }); refresh(); setTab("mine"); }}>
+          <div className="md:col-span-2"><label className={labelClass}>Title</label><input required value={submission.title} onChange={e => setSubmission({ ...submission, title: e.target.value })} className={inputClass} /></div>
+          <div className="md:col-span-2"><label className={labelClass}>Summary</label><textarea required minLength={20} rows={3} value={submission.summary} onChange={e => setSubmission({ ...submission, summary: e.target.value })} className={inputClass} /></div>
+          <div><label className={labelClass}>Biomarkers (comma separated)</label><input required value={submission.biomarkers} onChange={e => setSubmission({ ...submission, biomarkers: e.target.value })} className={inputClass} /></div>
+          <div><label className={labelClass}>Cancer type</label><input required value={submission.cancerType} onChange={e => setSubmission({ ...submission, cancerType: e.target.value })} className={inputClass} /></div>
+          <div className="md:col-span-2"><label className={labelClass}>Source URL (optional)</label><input value={submission.sourceUrl} onChange={e => setSubmission({ ...submission, sourceUrl: e.target.value })} className={inputClass} /></div>
+          <button className="md:col-span-2 bg-teal-700 text-white rounded-xl py-3 font-semibold">Submit for review</button>
+        </form>
+      )}
+      {tab === "mine" && <div className="mt-4 space-y-2">{mineQ.isPending ? <p>Loading…</p> : (mineQ.data || []).length === 0 ? <p className="text-sm text-[var(--dim)]">No submissions yet.</p> : mineQ.data!.map(s => <article key={s.id} className="border border-[var(--border)] rounded-xl p-3"><div className="flex justify-between gap-2"><strong className="text-sm">{s.title}</strong><span className="text-xs font-mono2">{s.status} · v{s.version}</span></div><p className="text-sm text-[var(--dim)] mt-1">{s.summary}</p><p className="text-xs mt-2">{s.cancerType} · {s.biomarkers.join(", ")}</p></article>)}</div>}
+      {tab === "review" && <div className="mt-4 space-y-2">{reviewQ.isPending ? <p>Loading…</p> : (reviewQ.data || []).length === 0 ? <p className="text-sm text-[var(--dim)]">The review queue is empty.</p> : reviewQ.data!.map(s => <article key={s.id} className="border border-[var(--border)] rounded-xl p-3"><div className="flex justify-between gap-2"><strong className="text-sm">{s.title}</strong><span className="text-xs font-mono2">{s.status}</span></div><p className="text-sm text-[var(--dim)] mt-1">{s.summary}</p><div className="flex flex-col md:flex-row gap-2 mt-3"><input aria-label={`Review note for ${s.title}`} placeholder="Review note (required to reject)" value={notes[s.id] || ""} onChange={e => setNotes({ ...notes, [s.id]: e.target.value })} className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-sm" /><button onClick={async () => { await api.approveSubmission(s.id, notes[s.id]); refresh(); }} className="bg-teal-700 text-white rounded-lg px-4 py-2 text-sm font-semibold">Approve</button><button onClick={async () => { await api.rejectSubmission(s.id, notes[s.id] || ""); refresh(); }} className="border border-rose-300 text-rose-700 rounded-lg px-4 py-2 text-sm font-semibold">Reject</button></div></article>)}</div>}
+      {tab === "admin" && user.role === "admin" && (
+        <div className="mt-4 space-y-5">
+          <form className="flex flex-col md:flex-row gap-2" onSubmit={async e => { e.preventDefault(); const result = await api.createInvite(inviteEmail, inviteRole); setInviteResult(`${window.location.origin}/?invite=${result.token}`); }}>
+            <input type="email" placeholder="Invitee email (optional)" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-sm" />
+            <select value={inviteRole} onChange={e => setInviteRole(e.target.value as Role)} className="rounded-lg border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-sm"><option value="doctor">Doctor</option><option value="reviewer">Reviewer</option><option value="admin">Admin</option></select>
+            <button className="bg-[#0B1220] text-white rounded-lg px-4 py-2 text-sm font-semibold">Create invite</button>
+          </form>
+          {inviteResult && <p className="text-xs break-all rounded-xl bg-[var(--surface2)] border border-[var(--border)] p-3">Share this registration link once: <code>{inviteResult}</code></p>}
+          <div className="space-y-2">{(usersQ.data || []).map(u => <div key={u.id} className="flex flex-wrap items-center justify-between gap-2 border border-[var(--border)] rounded-xl p-3"><div><strong className="text-sm">{u.name}</strong><span className="text-xs text-[var(--dim)]"> · {u.email} · {u.role} · {u.status} · NPI {u.npiVerification}</span></div><div className="flex gap-2">{u.status === "pending" && <button onClick={async () => { await api.approveUser(u.id); refresh(); }} className="bg-teal-700 text-white rounded-lg px-3 py-1.5 text-xs font-semibold">Approve</button>}{u.status !== "suspended" && u.id !== user.id && <button onClick={async () => { await api.suspendUser(u.id); refresh(); }} className="border border-[var(--border)] rounded-lg px-3 py-1.5 text-xs">Suspend</button>}</div></div>)}</div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function App() {
   const qc = useQueryClient();
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -113,7 +224,10 @@ export function App() {
   const [showForm, setShowForm] = useState(true);
   const [cancerFilter, setCancerFilter] = useState("All");
 
-  const listQ = useQuery({ queryKey: ["cases"], queryFn: () => api.listCases({ limit: 50 }) });
+  const authQ = useQuery({ queryKey: ["auth-me"], queryFn: api.me });
+  const currentUser: PlatformUser | null = authQ.data?.user ?? null;
+  const isActive = currentUser?.status === "active";
+  const listQ = useQuery({ queryKey: ["cases"], queryFn: () => api.listCases({ limit: 50 }), enabled: isActive });
   const allCases = listQ.data?.cases ?? [];
   const cases = cancerFilter === "All" ? allCases : allCases.filter(c => c.cancerType === cancerFilter);
   const stats = listQ.data?.stats ?? { totalCases: 0, totalUploads: 0, totalMatches: 0, actionable: 0 };
@@ -127,7 +241,7 @@ export function App() {
   const detailQ = useQuery({
     queryKey: ["detail", selected?.id],
     queryFn: () => api.getCaseDetail({ caseId: selected!.id }),
-    enabled: !!selected,
+    enabled: !!selected && isActive,
   });
   const uploads: Detail["uploads"] = detailQ.data?.uploads ?? [];
   const matches: Detail["matches"] = detailQ.data?.matches ?? [];
@@ -138,7 +252,7 @@ export function App() {
   });
   const deleteMut = useMutation({ mutationFn: (id: number) => api.deleteCase({ id }), onSuccess: () => { setSelectedId(null); qc.invalidateQueries({ queryKey: ["cases"] }); qc.invalidateQueries({ queryKey: ["detail"] }); } });
   const addUploadMut = useMutation({
-    mutationFn: (args: { fileName: string; fileKind: string; sizeKb: number }) => api.addUpload({ caseId: selected!.id, fileName: args.fileName, fileKind: args.fileKind, sizeKb: args.sizeKb }),
+    mutationFn: (file: File) => api.uploadResearch(selected!.id, file),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["detail"] }); qc.invalidateQueries({ queryKey: ["cases"] }); },
   });
   const deleteUploadMut = useMutation({ mutationFn: (id: number) => api.deleteUpload({ id }), onSuccess: () => { qc.invalidateQueries({ queryKey: ["detail"] }); qc.invalidateQueries({ queryKey: ["cases"] }); } });
@@ -159,12 +273,16 @@ export function App() {
     setTimeout(() => setPipelineStep(-1), 1200);
   };
 
-  const handleFiles = (files: FileList | null) => {
+  const handleFiles = async (files: FileList | null) => {
     if (!files || !selected) return;
-    Array.from(files).forEach(f => {
-      const kind = f.name.endsWith(".vcf") ? "VCF File" : f.name.endsWith(".pdf") ? "Research PDF" : f.name.endsWith(".csv") ? "CSV Data" : "Research PDF";
-      addUploadMut.mutate({ fileName: f.name, fileKind: kind, sizeKb: Math.max(1, Math.round(f.size / 1024)) });
-    });
+    for (const file of Array.from(files)) {
+      await addUploadMut.mutateAsync(file);
+    }
+  };
+
+  const addSampleBiomarkerList = async () => {
+    const file = new File([`${SAMPLE_BIOMARKERS.join("\n")}\n`], "sample-biomarkers.txt", { type: "text/plain" });
+    await addUploadMut.mutateAsync(file);
   };
 
   const buildSummaryText = useCallback(() => {
@@ -189,7 +307,7 @@ export function App() {
       matches.forEach((m, i) => {
         lines.push(`${i + 1}. ${m.gene} ${m.variant} — ${m.classification} (${m.confidence}% confidence)`);
         lines.push(`   ${plainExplanation(m.gene, m.therapy)}`);
-        lines.push(`   Possible option to discuss: ${m.therapy}  •  Evidence: ${m.evidenceLevel}  •  Clinical trials found: ${m.trialCount}`);
+        lines.push(`   Possible trial to discuss: ${m.therapy}  •  Evidence: ${m.evidenceLevel}  •  Trial record: ${m.trialCount}`);
         if (m.vaf > 0) lines.push(`   Amount in sample (VAF): ${m.vaf.toFixed(1)}%`);
         lines.push(`   Clinician note: ${m.rationale}`);
         lines.push("");
@@ -214,7 +332,7 @@ export function App() {
     lines.push("5. When should we re-test (for example, with a liquid biopsy) if treatment stops working?");
     lines.push("");
     lines.push("—".repeat(56));
-    lines.push("Demo mockup — illustrative data only, not medical advice. Always review");
+    lines.push("Research prototype — not medical advice. Always review");
     lines.push("with a qualified oncologist / molecular tumor board before decisions.");
     return lines.join("\n");
   }, [selected, uploads.length, matches]);
@@ -228,7 +346,7 @@ export function App() {
     } else {
       const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
       const rows = matches.map(m => `<tr><td><strong>${esc(m.gene)} ${esc(m.variant)}</strong><br><small>${esc(plainExplanation(m.gene, m.therapy))}</small></td><td>${esc(m.therapy)}</td><td>${esc(m.evidenceLevel)}</td><td>${m.trialCount}</td><td>${m.confidence}%</td></tr>`).join("");
-      const html = `<!doctype html><html><head><meta charset="utf-8"><title>Patient Summary — ${esc(selected.label)}</title><style>body{font-family:system-ui,Arial,sans-serif;max-width:760px;margin:32px auto;padding:0 20px;color:#0b1220;line-height:1.5}h1{font-size:22px}table{width:100%;border-collapse:collapse;margin:16px 0}td,th{border:1px solid #d9e2dc;padding:8px;text-align:left;font-size:14px}th{background:#0B1220;color:#fff}.meta{background:#f3f6f3;padding:12px 16px;border-radius:10px}footer{font-size:12px;color:#64746d;margin-top:24px}</style></head><body><h1>Patient Summary — Biomarker Results</h1><div class="meta"><strong>Case:</strong> ${esc(selected.label)}<br><strong>Cancer:</strong> ${esc(selected.cancerType)} — ${esc(selected.stage)}${selected.histology ? ` • ${esc(selected.histology)}` : ""}<br><strong>Test:</strong> ${esc(selected.sampleType)} • <strong>Prepared:</strong> ${new Date().toLocaleDateString()}</div><h2>Findings &amp; options to discuss</h2><table><thead><tr><th>Finding</th><th>Possible option</th><th>Evidence</th><th>Trials</th><th>Confidence</th></tr></thead><tbody>${rows || "<tr><td colspan='5'>No matches yet — run the AI match first.</td></tr>"}</tbody></table><h2>Questions to ask your oncologist</h2><ol><li>Which finding is most actionable for me right now?</li><li>Should inherited (germline) testing be confirmed?</li><li>Am I eligible for any of these trials?</li><li>What are benefits, side effects, and alternatives?</li></ol><footer>Demo mockup — illustrative data only, not medical advice. Review with a qualified oncologist / molecular tumor board.</footer></body></html>`;
+      const html = `<!doctype html><html><head><meta charset="utf-8"><title>Patient Summary — ${esc(selected.label)}</title><style>body{font-family:system-ui,Arial,sans-serif;max-width:760px;margin:32px auto;padding:0 20px;color:#0b1220;line-height:1.5}h1{font-size:22px}table{width:100%;border-collapse:collapse;margin:16px 0}td,th{border:1px solid #d9e2dc;padding:8px;text-align:left;font-size:14px}th{background:#0B1220;color:#fff}.meta{background:#f3f6f3;padding:12px 16px;border-radius:10px}footer{font-size:12px;color:#64746d;margin-top:24px}</style></head><body><h1>Patient Summary — Biomarker Results</h1><div class="meta"><strong>Case:</strong> ${esc(selected.label)}<br><strong>Cancer:</strong> ${esc(selected.cancerType)} — ${esc(selected.stage)}${selected.histology ? ` • ${esc(selected.histology)}` : ""}<br><strong>Test:</strong> ${esc(selected.sampleType)} • <strong>Prepared:</strong> ${new Date().toLocaleDateString()}</div><h2>Findings &amp; options to discuss</h2><table><thead><tr><th>Finding</th><th>Trial</th><th>Match score</th><th>Records</th><th>Score</th></tr></thead><tbody>${rows || "<tr><td colspan='5'>No matches yet — run the AI match first.</td></tr>"}</tbody></table><h2>Questions to ask your oncologist</h2><ol><li>Which finding is most actionable for me right now?</li><li>Should inherited (germline) testing be confirmed?</li><li>Am I eligible for any of these trials?</li><li>What are benefits, side effects, and alternatives?</li></ol><footer>Research prototype — not medical advice. Review with a qualified oncologist / molecular tumor board.</footer></body></html>`;
       blob = new Blob([html], { type: "text/html;charset=utf-8" });
       filename = `patient-summary-${selected.label.replace(/[^a-z0-9]+/gi, "-").slice(0, 40)}.html`;
     }
@@ -241,11 +359,42 @@ export function App() {
     try { await navigator.clipboard.writeText(buildSummaryText()); setSummaryCopied(true); setTimeout(() => setSummaryCopied(false), 2000); } catch {}
   };
 
+  if (authQ.isPending) {
+    return <div className="min-h-screen bg-[var(--bg)] text-[var(--text)] flex items-center justify-center p-6"><p className="font-semibold">Checking your secure session…</p></div>;
+  }
+
+  if (!currentUser) {
+    return (
+      <div className={`min-h-screen bg-[var(--bg)] text-[var(--text)] pb-10 ${isClinicalDark ? "clinical-dark" : ""}`}>
+        <main className="max-w-5xl mx-auto px-4 pt-10">
+          <p className="text-[11px] font-mono2 tracking-[0.18em] uppercase text-teal-700">Cloudflare Worker · D1 · Invite-only</p>
+          <h1 className="text-4xl font-bold mt-2">Precision Oncology Biomarker Matcher</h1>
+          <p className="text-[var(--dim)] mt-2 mb-6 max-w-2xl">Sign in with an approved doctor, reviewer, or admin account to use the live D1-backed case workspace and Lenhard trial matcher.</p>
+          <AuthPanel onAuthenticated={() => { qc.invalidateQueries({ queryKey: ["auth-me"] }); qc.invalidateQueries({ queryKey: ["cases"] }); }} />
+          <p className="text-center text-xs text-[var(--dim)] mt-6">Static HTML5 guides are available under <a className="underline" href="/static/">/static/</a>. Research prototype — not for clinical decision-making.</p>
+        </main>
+      </div>
+    );
+  }
+
+  if (!isActive) {
+    return (
+      <div className="min-h-screen bg-[var(--bg)] text-[var(--text)] flex items-center justify-center p-6">
+        <main className="max-w-xl w-full bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6">
+          <p className="text-[11px] font-mono2 tracking-widest uppercase text-teal-700">Account {currentUser.status}</p>
+          <h1 className="text-2xl font-bold mt-2">Workspace locked until approval</h1>
+          <p className="text-sm text-[var(--dim)] mt-2">{currentUser.name} · {currentUser.email} · {currentUser.role}. MFA status: {currentUser.mfaConfirmedAt ? "confirmed" : "not confirmed"}. An administrator must approve this account before cases, submissions, and review tools unlock.</p>
+          <button onClick={async () => { await api.logout(); qc.invalidateQueries({ queryKey: ["auth-me"] }); }} className="mt-5 bg-[#0B1220] text-white rounded-xl px-4 py-2.5 text-sm font-semibold">Sign out</button>
+        </main>
+      </div>
+    );
+  }
+
   const pipeline = [
-    { label: "Ingest", desc: "Parse PDFs, VCF & IHC" },
-    { label: "Extract", desc: "NLP biomarker extraction" },
-    { label: "Cross-Reference", desc: "OncoKB · CIViC · Literature" },
-    { label: "Rank", desc: "Evidence + trial matching" },
+    { label: "Ingest", desc: "Validate biomarker lists" },
+    { label: "Extract", desc: "Recognized gene symbols only" },
+    { label: "Cross-Reference", desc: "Cloudflare D1 trial criteria" },
+    { label: "Rank", desc: "Lenhard engine match score" },
   ];
 
   const coveredTypes = Object.keys(CANCER_GROUPS).length;
@@ -259,12 +408,12 @@ export function App() {
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse" />
-                <span className="text-[11px] font-mono2 tracking-[0.18em] uppercase text-emerald-300">Engine Online · KB v2026.10 · Mockup</span>
+                <span className="text-[11px] font-mono2 tracking-[0.18em] uppercase text-emerald-300">Engine Online · Cloudflare D1 Trial Catalog · Research Prototype</span>
                 <span className="text-[10px] font-mono2 px-2 py-0.5 rounded-full bg-teal-500/20 border border-teal-500/40 text-teal-200">{CANCER_TYPES.length - 1} CANCER TYPES + RARE</span>
                 {isClinicalDark && <span className="text-[10px] font-mono2 px-2 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-400/40 text-indigo-200">🌙 CLINICAL DARK</span>}
               </div>
               <h1 className="mt-2 text-[28px] leading-8 md:text-4xl font-bold tracking-tight">Precision Oncology<br className="hidden md:block" /> Biomarker Matcher</h1>
-              <p className="mt-2 text-sm text-slate-300 max-w-xl">Upload research, NGS reports & pathology — the AI extracts variants, classifies actionability, and ranks therapies + trials for tumor board. Now covering prostate, ovarian, gastric, bladder, endometrial, liver, kidney, thyroid, glioma, head & neck, and sarcoma.</p>
+              <p className="mt-2 text-sm text-slate-300 max-w-xl">Upload a strict, de-identified biomarker list — the Lenhard engine compares it with the trial criteria actually stored in Cloudflare D1 and ranks the resulting trial matches for tumor-board review.</p>
             </div>
             <div className="flex flex-col items-end gap-3">
               <div className="flex gap-2 md:gap-3">
@@ -327,6 +476,14 @@ export function App() {
       </div>
 
       <main className="max-w-7xl mx-auto px-4 -mt-1">
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 no-print">
+          <p className="text-sm"><strong>{currentUser.name}</strong> <span className="text-[var(--dim)]">· {currentUser.role} · {currentUser.email} · D1 workspace</span></p>
+          <div className="flex gap-2">
+            <a href="/static/" className="text-xs font-semibold border border-[var(--border)] rounded-full px-3 py-2">Static HTML5 pages</a>
+            <button onClick={async () => { await api.logout(); qc.invalidateQueries({ queryKey: ["auth-me"] }); qc.invalidateQueries({ queryKey: ["cases"] }); }} className="text-xs font-semibold border border-[var(--border)] rounded-full px-3 py-2">Sign out</button>
+          </div>
+        </div>
+        <div className="mt-4"><PlatformTools user={currentUser} onChanged={() => qc.invalidateQueries({ queryKey: ["cases"] })} /></div>
         <div className="grid lg:grid-cols-[360px_1fr] gap-5 mt-5 items-start">
           {/* Left column */}
           <div className="space-y-4 no-print">
@@ -372,10 +529,11 @@ export function App() {
                     <label htmlFor="prior" className="text-xs font-semibold tracking-wide uppercase text-[var(--dim)]">Prior therapy</label>
                     <textarea id="prior" value={priorTherapy} onChange={e => setPriorTherapy(e.target.value)} rows={2} placeholder="e.g. Carbo/pem ×4, pembro maintenance…" className="mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--surface2)] px-3 py-2.5 text-sm outline-none focus:ring-2 ring-teal-600 resize-none" />
                   </div>
+                  {createMut.isError && <p className="text-xs text-rose-700" role="alert">{createMut.error instanceof Error ? createMut.error.message : "Could not create the case."}</p>}
                   <button onClick={() => createMut.mutate()} disabled={createMut.isPending} aria-label="Create case" className="w-full bg-[#0B1220] dark:bg-teal-600 text-white font-semibold py-3 rounded-xl text-sm disabled:opacity-50" style={isClinicalDark ? { background: "#0d9488" } : undefined}>
                     {createMut.isPending ? "Creating…" : "Create Case → Go to Upload"}
                   </button>
-                  <p className="text-[11px] text-[var(--dim)] leading-relaxed">Demo mockup — do not enter real PHI. Use de-identified labels only. Every cancer type above now has its own dedicated biomarker library.</p>
+                  <p className="text-[11px] text-[var(--dim)] leading-relaxed">Do not enter real PHI. Use de-identified labels only. The 16 cancer categories plus Rare organize intake; matching uses the current D1 trial catalog.</p>
                 </div>
               )}
             </section>
@@ -465,8 +623,8 @@ export function App() {
                       <div className="mt-4 rounded-xl bg-[var(--surface2)] border border-[var(--border)] p-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
                         <div><div className="font-bold text-lg">{uploads.length}</div><div className="text-[10px] uppercase tracking-widest text-[var(--dim)]">Files reviewed</div></div>
                         <div><div className="font-bold text-lg">{matches.length}</div><div className="text-[10px] uppercase tracking-widest text-[var(--dim)]">Findings</div></div>
-                        <div><div className="font-bold text-lg">{matches.filter(m => m.confidence >= 85).length}</div><div className="text-[10px] uppercase tracking-widest text-[var(--dim)]">High confidence</div></div>
-                        <div><div className="font-bold text-lg">{matches.reduce((a, m) => a + m.trialCount, 0)}</div><div className="text-[10px] uppercase tracking-widest text-[var(--dim)]">Trials found</div></div>
+                        <div><div className="font-bold text-lg">{matches.filter(m => m.classification === "Potential match").length}</div><div className="text-[10px] uppercase tracking-widest text-[var(--dim)]">Potential matches</div></div>
+                        <div><div className="font-bold text-lg">{matches.reduce((a, m) => a + m.trialCount, 0)}</div><div className="text-[10px] uppercase tracking-widest text-[var(--dim)]">Trial records</div></div>
                       </div>
 
                       {matches.length === 0 ? (
@@ -480,10 +638,10 @@ export function App() {
                             <li key={m.id} className="rounded-xl border border-[var(--border)] p-3.5">
                               <div className="flex flex-wrap justify-between gap-2">
                                 <span className="font-bold text-sm">{i + 1}. {m.gene} {m.variant} <span className="font-normal text-[var(--dim)]">— {m.classification}</span></span>
-                                <span className="text-[11px] font-mono2 bg-teal-100 dark:bg-teal-900/40 text-teal-800 dark:text-teal-200 px-2 py-0.5 rounded-full">{m.confidence}% confidence · {m.evidenceLevel}</span>
+                                <span className="text-[11px] font-mono2 bg-teal-100 dark:bg-teal-900/40 text-teal-800 dark:text-teal-200 px-2 py-0.5 rounded-full">{m.confidence}% match · Score {m.evidenceLevel}</span>
                               </div>
                               <p className="text-[13px] mt-1.5 leading-relaxed">{plainExplanation(m.gene, m.therapy)}</p>
-                              <p className="text-[13px] mt-1"><strong>Option to discuss:</strong> {m.therapy} <span className="text-[var(--dim)]">· {m.trialCount} trials found{m.vaf > 0 ? ` · VAF ${m.vaf.toFixed(1)}%` : ""}</span></p>
+                              <p className="text-[13px] mt-1"><strong>Option to discuss:</strong> {m.therapy} <span className="text-[var(--dim)]">· {m.trialCount} trial record found{m.vaf > 0 ? ` · VAF ${m.vaf.toFixed(1)}%` : ""}</span></p>
                             </li>
                           ))}
                         </ol>
@@ -505,7 +663,7 @@ export function App() {
                         </div>
                       </div>
                       <pre className="mt-4 whitespace-pre-wrap text-[11px] font-mono2 bg-[var(--surface2)] border border-[var(--border)] rounded-xl p-3 max-h-48 overflow-auto no-print" aria-label="Plain text summary preview">{buildSummaryText()}</pre>
-                      <p className="text-[11px] text-[var(--dim)] mt-3">Demo mockup — illustrative data only, not medical advice. Review with a qualified oncologist / molecular tumor board.</p>
+                      <p className="text-[11px] text-[var(--dim)] mt-3">Research prototype — not medical advice. Review with a qualified oncologist / molecular tumor board.</p>
                     </div>
                   </section>
                 )}
@@ -514,7 +672,7 @@ export function App() {
                 <section className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl overflow-hidden no-print">
                   <div className="px-4 md:px-5 pt-4 pb-3 flex items-center justify-between">
                     <h3 className="font-bold">Upload Research</h3>
-                    <span className="text-[11px] font-mono2 text-[var(--dim)]">PDF · VCF · CSV · FASTQ · DICOM</span>
+                    <span className="text-[11px] font-mono2 text-[var(--dim)]">TXT · CSV · TSV · JSON · 5 MB MAX</span>
                   </div>
                   <div
                     onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
@@ -524,17 +682,17 @@ export function App() {
                   >
                     <div className="mx-auto w-12 h-12 rounded-full bg-[#0B1220] text-white flex items-center justify-center text-xl">⬆</div>
                     <p className="font-semibold mt-3">Drop research files here</p>
-                    <p className="text-xs text-[var(--dim)] mt-1 max-w-md mx-auto">NGS reports, journal PDFs, pathology, variant files. In this mockup files are catalogued by name/size — no file bytes leave the device.</p>
+                    <p className="text-xs text-[var(--dim)] mt-1 max-w-md mx-auto">Upload a plain biomarker-symbol list. The file is sent to the Worker for validation and matching; the original bytes are not stored — D1 retains only the file metadata and extracted symbols.</p>
                     <div className="flex flex-wrap justify-center gap-2 mt-4">
-                      <button onClick={() => fileRef.current?.click()} aria-label="Browse files to upload" className="bg-teal-700 text-white text-sm font-semibold px-4 py-2.5 rounded-full">Browse files</button>
-                      <button onClick={() => { const s = SAMPLE_FILES[Math.floor(Math.random() * SAMPLE_FILES.length)]!; addUploadMut.mutate({ fileName: s.name, fileKind: s.kind, sizeKb: s.kb }); }} aria-label="Add a sample research file" className="bg-white dark:bg-transparent border border-[var(--border)] text-sm font-semibold px-4 py-2.5 rounded-full">+ Add sample file</button>
+                      <button onClick={() => fileRef.current?.click()} aria-label="Browse biomarker lists to upload" className="bg-teal-700 text-white text-sm font-semibold px-4 py-2.5 rounded-full">Browse biomarker lists</button>
+                      <button onClick={() => { void addSampleBiomarkerList(); }} aria-label="Add a sample biomarker list" className="bg-white dark:bg-transparent border border-[var(--border)] text-sm font-semibold px-4 py-2.5 rounded-full">+ Add sample biomarker list</button>
                     </div>
-                    <input ref={fileRef} type="file" multiple accept=".pdf,.vcf,.csv,.txt,.gz" onChange={e => handleFiles(e.target.files)} className="hidden" aria-label="File input" />
+                    <input ref={fileRef} type="file" multiple accept=".txt,.csv,.tsv,.json" onChange={e => { void handleFiles(e.target.files); e.currentTarget.value = ""; }} className="hidden" aria-label="File input" />
                   </div>
 
                   <div className="px-4 md:px-5 py-4">
                     {uploads.length === 0 ? (
-                      <p className="text-sm text-[var(--dim)] text-center py-2">No files yet — add a sample or browse to populate this case.</p>
+                      <p className="text-sm text-[var(--dim)] text-center py-2">No files yet — add the sample biomarker list or browse for a supported list.</p>
                     ) : (
                       <ul className="divide-y divide-[var(--border)]">
                         {uploads.map(u => (
@@ -542,9 +700,9 @@ export function App() {
                             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-teal-100 dark:bg-teal-900/40 text-teal-800 dark:text-teal-200 text-[10px] font-mono2 font-bold">{u.fileKind.slice(0, 3).toUpperCase()}</span>
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium truncate">{u.fileName}</p>
-                              <p className="text-[11px] text-[var(--dim)] font-mono2">{u.fileKind} · {(u.sizeKb / 1024).toFixed(2)} MB · {new Date(u.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
+                              <p className="text-[11px] text-[var(--dim)] font-mono2">{u.fileKind} · {(u.sizeKb / 1024).toFixed(2)} MB · {new Date(u.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p><p className="text-[11px] font-mono2 text-teal-700 dark:text-teal-300">{u.biomarkers.join(", ")}</p>
                             </div>
-                            <span className="text-[10px] font-mono2 px-2 py-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200">PARSED ✓</span>
+                            <span className="text-[10px] font-mono2 px-2 py-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200">ANALYZED ✓</span>
                             <button onClick={() => deleteUploadMut.mutate(u.id)} aria-label={`Remove ${u.fileName}`} className="text-[var(--dim)] px-1 text-lg leading-none">×</button>
                           </li>
                         ))}
@@ -556,7 +714,8 @@ export function App() {
                     <button onClick={handleRun} disabled={runMut.isPending || pipelineStep >= 0} aria-label="Run AI biomarker match" className="w-full bg-teal-700 hover:bg-teal-800 text-white font-bold py-3.5 rounded-xl text-[15px] disabled:opacity-60 flex items-center justify-center gap-2">
                       {pipelineStep >= 0 && pipelineStep < 4 ? `⟳ ${pipeline[pipelineStep]?.label} — analyzing…` : pipelineStep === 4 ? "✓ Match Complete — Results Below" : matches.length ? "↻ Re-run AI Biomarker Match" : "✦ Run AI Biomarker Match"}
                     </button>
-                    <p className="text-[11px] text-center text-[var(--dim)] mt-2">Demo engine: dedicated library for {selected.cancerType} — ranked by confidence. Not medical advice.</p>
+                    {(addUploadMut.isError || runMut.isError) && <p className="text-xs text-rose-700 text-center mt-2" role="alert">{(addUploadMut.error || runMut.error) instanceof Error ? (addUploadMut.error || runMut.error)!.message : "The match request failed."}</p>}
+                    <p className="text-[11px] text-center text-[var(--dim)] mt-2">Lenhard engine: uploaded symbols are matched against D1 trial criteria for this {selected.cancerType} case. Not medical advice.</p>
                   </div>
                 </section>
 
@@ -565,8 +724,8 @@ export function App() {
                   <section>
                     <div className="flex flex-wrap items-end justify-between gap-2 px-1 mb-3">
                       <div>
-                        <h3 className="font-bold text-lg leading-none">Biomarker Matches</h3>
-                        <p className="text-xs text-[var(--dim)] mt-1">{matches.length} alterations · {matches.filter(m => m.confidence >= 85).length} high-confidence actionable · Sorted by confidence</p>
+                        <h3 className="font-bold text-lg leading-none">Trial Matches</h3>
+                        <p className="text-xs text-[var(--dim)] mt-1">{matches.length} D1 trial records · {matches.filter(m => m.classification === "Potential match").length} potential matches · Sorted by match score</p>
                       </div>
                       <div className="flex gap-2">
                         <button onClick={() => setShowSummary(true)} aria-label="Export patient summary from results" className="text-[11px] font-semibold bg-teal-700 text-white rounded-full px-3 py-1.5">📄 Export Summary</button>
@@ -587,25 +746,25 @@ export function App() {
                             <span className={`shrink-0 text-[10px] font-bold px-2 py-1 rounded-full ${classBadge(m.classification)}`}>{m.classification.toUpperCase()}</span>
                           </div>
                           <div className="mt-3">
-                            <div className="flex justify-between text-[11px] font-mono2"><span className="text-[var(--dim)]">AI CONFIDENCE</span><span className="font-bold">{m.confidence}%</span></div>
+                            <div className="flex justify-between text-[11px] font-mono2"><span className="text-[var(--dim)]">MATCH SCORE</span><span className="font-bold">{m.confidence}%</span></div>
                             <div className="h-2 rounded-full bg-[var(--surface2)] border border-[var(--border)] mt-1 overflow-hidden"><div className={`h-full rounded-full ${confidenceColor(m.confidence)}`} style={{ width: `${m.confidence}%` }} /></div>
                           </div>
                           <p className="text-[13px] leading-relaxed mt-3 text-[var(--text)]/90 flex-1">{m.rationale}</p>
                           <p className="text-[12px] leading-relaxed mt-2 bg-[var(--surface2)] border border-[var(--border)] rounded-lg px-2.5 py-2"><span className="font-semibold">For the patient: </span>{plainExplanation(m.gene, m.therapy)}</p>
                           <div className="mt-3 pt-3 border-t border-[var(--border)] flex flex-wrap gap-2">
-                            <span className="inline-flex items-center gap-1 bg-[#0B1220] text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg">💊 {m.therapy}</span>
+                            <span className="inline-flex items-center gap-1 bg-[#0B1220] text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg">🧪 Trial: {m.therapy}</span>
                             <span className="inline-flex items-center text-xs font-mono2 px-2 py-1.5 rounded-lg bg-[var(--surface2)] border border-[var(--border)]">{m.evidenceLevel}</span>
-                            <span className="inline-flex items-center text-xs font-mono2 px-2 py-1.5 rounded-lg bg-[var(--surface2)] border border-[var(--border)]">🧪 {m.trialCount} trials</span>
+                            <span className="inline-flex items-center text-xs font-mono2 px-2 py-1.5 rounded-lg bg-[var(--surface2)] border border-[var(--border)]">🧪 {m.trialCount} trial record</span>
                           </div>
                         </article>
                       ))}
                     </div>
 
                     <div className="mt-4 bg-[var(--surface)] border border-[var(--border)] rounded-2xl overflow-hidden">
-                      <div className="px-4 py-3 border-b border-[var(--border)] flex flex-wrap justify-between gap-2"><span className="font-bold text-sm">Therapy Ranking — At a Glance</span><div className="flex gap-2"><button onClick={() => downloadSummary("html")} aria-label="Download therapy ranking summary HTML" className="text-[11px] font-mono2 border border-[var(--border)] rounded-full px-2.5 py-1">⬇ EXPORT .HTML</button><span className="text-[11px] font-mono2 text-[var(--dim)] self-center">MOCKUP</span></div></div>
+                      <div className="px-4 py-3 border-b border-[var(--border)] flex flex-wrap justify-between gap-2"><span className="font-bold text-sm">Trial Ranking — At a Glance</span><div className="flex gap-2"><button onClick={() => downloadSummary("html")} aria-label="Download therapy ranking summary HTML" className="text-[11px] font-mono2 border border-[var(--border)] rounded-full px-2.5 py-1">⬇ EXPORT .HTML</button><span className="text-[11px] font-mono2 text-[var(--dim)] self-center">MOCKUP</span></div></div>
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm min-w-[520px]">
-                          <thead><tr className="text-left text-[11px] uppercase tracking-wider text-[var(--dim)] border-b border-[var(--border)]"><th className="px-4 py-2 font-semibold">Biomarker</th><th className="px-4 py-2 font-semibold">Matched Therapy</th><th className="px-4 py-2 font-semibold">Evidence</th><th className="px-4 py-2 font-semibold text-right">Trials</th></tr></thead>
+                          <thead><tr className="text-left text-[11px] uppercase tracking-wider text-[var(--dim)] border-b border-[var(--border)]"><th className="px-4 py-2 font-semibold">Matched Biomarkers</th><th className="px-4 py-2 font-semibold">Trial</th><th className="px-4 py-2 font-semibold">Match Score</th><th className="px-4 py-2 font-semibold text-right">Records</th></tr></thead>
                           <tbody>
                             {matches.map(m => (
                               <tr key={m.id} className="border-b border-[var(--border)] last:border-0">
@@ -618,7 +777,7 @@ export function App() {
                           </tbody>
                         </table>
                       </div>
-                      <p className="px-4 py-3 text-[11px] text-[var(--dim)] leading-relaxed bg-[var(--surface2)]">Illustrative mockup data for product demonstration only. Real deployment would require validated assays, licensed knowledge bases (OncoKB/CIViC), and clinician review before any treatment decision.</p>
+                      <p className="px-4 py-3 text-[11px] text-[var(--dim)] leading-relaxed bg-[var(--surface2)]">These results are computed from the uploaded symbols and the trial criteria currently stored in D1. They do not establish eligibility and require clinician review before any treatment decision.</p>
                     </div>
                   </section>
                 )}
@@ -636,8 +795,8 @@ export function App() {
 
         {/* Coverage + explainer */}
         <div className="mt-6 bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 md:p-5 no-print">
-          <h3 className="font-bold">Cancer Type Coverage — Dedicated Libraries</h3>
-          <p className="text-[13px] text-[var(--dim)] mt-1">Each type below runs its own biomarker set (not a generic fallback) — try creating a case in each to see different genes, therapies, and trials.</p>
+          <h3 className="font-bold">Cancer Type Coverage — Intake Libraries</h3>
+          <p className="text-[13px] text-[var(--dim)] mt-1">These 16 categories plus Rare organize clinician intake. Trial results always come from the current D1 catalog, so the interface does not invent a separate result set for a category with no matching D1 trial.</p>
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
             {Object.entries(CANCER_GROUPS).map(([group, types]) => (
               <div key={group} className="rounded-xl bg-[var(--surface2)] border border-[var(--border)] p-3">
@@ -650,9 +809,9 @@ export function App() {
 
         <div className="grid md:grid-cols-3 gap-3 mt-4 no-print">
           {[
-            { t: "1 · Intake & Upload", d: "Clinician creates a de-identified case and drops NGS reports, research PDFs, VCFs and IHC — everything the engine needs in one place." },
-            { t: "2 · AI Extraction", d: "NLP + variant calling parses unstructured research into structured biomarkers: gene, variant, VAF, classification and evidence level." },
-            { t: "3 · Match, Rank & Summarize", d: "Each biomarker is cross-referenced against therapies and open trials, ranked by confidence — then turned into a one-page patient summary you can download or print." },
+            { t: "1 · Intake & Upload", d: "Clinician creates a de-identified case and uploads a supported biomarker list for that case." },
+            { t: "2 · AI Extraction", d: "The Worker validates the list, rejects free text and unknown symbols, and stores only the extracted biomarker symbols with the file metadata." },
+            { t: "3 · Match, Rank & Summarize", d: "Each uploaded symbol is compared with D1 trial criteria, ranked by the Lenhard match score, then included in a patient summary you can copy, download, or print." },
           ].map(c => (
             <div key={c.t} className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4">
               <h4 className="font-bold text-sm">{c.t}</h4>
@@ -660,7 +819,7 @@ export function App() {
             </div>
           ))}
         </div>
-        <p className="text-center text-[11px] text-[var(--dim)] mt-6 font-mono2">ONCOLOGY BIOMARKER MATCHER — REACT MOCKUP · {CANCER_TYPES.length - 1} CANCER TYPES · CLINICAL DARK AVAILABLE · DEMO DATA ONLY · NOT FOR CLINICAL USE</p>
+        <p className="text-center text-[11px] text-[var(--dim)] mt-6 font-mono2">ONCOLOGY BIOMARKER MATCHER — CLOUDFLARE WORKER + D1 · {CANCER_TYPES.length - 1} CANCER TYPES · CLINICAL DARK AVAILABLE · LIVE API DATA · RESEARCH PROTOTYPE · NOT FOR CLINICAL USE</p>
       </main>
     </div>
   );

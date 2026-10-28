@@ -1,81 +1,87 @@
-# Oncology Biomarker Matcher — Front End
+# Oncology Biomarker Matcher — React Front End
 
-This directory is a source snapshot of the **Oncology Biomarker Matcher** front
-end: a React + TypeScript UI (with a small Bun/TypeScript server layer) built
-earlier as a hosted web artifact. It is the clinician-facing companion to this
-repository's precision oncology matching engine — where the engine in
-`engine/` matches biomarkers to clinical trials, this UI is where research
-gets uploaded and results get reviewed.
+The front end is now a standalone React + TypeScript application built
+with Vite. It no longer depends on `@hatch/space-sdk`, Bun, or a local
+hosted-runtime package.
 
-## What the UI does
+## Production wiring
 
-- **Case intake** — create a de-identified case (cancer type, stage,
-  histology, assay).
-- **Research upload** — drag-and-drop or browse for NGS reports, PDFs, and
-  VCFs, or load sample files.
-- **AI matching pipeline view** — a four-step run visualization:
-  Ingest → Extract → Cross-Reference → Rank.
-- **Biomarker results** — cards with variant, VAF, classification, AI
-  confidence, evidence level, matched therapy, and trial count across
-  **16 cancer-type libraries (plus Rare)**, grouped at intake
-  (Thoracic/Skin, GI, GU/Gyn, Neuro/Endocrine/Sarcoma), with a case filter and
-  coverage grid.
-- **Therapy ranking table** for tumor-board review.
-- **Clinical Dark theme** — Auto / Light / Clinical Dark toggle (persisted),
-  using a deep navy-black, high-contrast palette.
-- **Patient-summary export** — a plain-language per-case summary with
-  per-finding explanations, stats, and questions for the oncologist, with
-  Copy, Download .txt, Download .html, and Print/PDF actions.
+The browser talks directly to the Cloudflare Worker API:
 
-The UI is labeled throughout as a demo mockup and is **not for clinical use**.
+- `/api/auth/me`, login/logout, invite-only registration, and MFA
+  enrollment/confirmation
+- Admin invite creation, account approval/suspension, and user listing
+- `/api/submissions` and `/api/review-queue`
+- Authenticated `/api/cases` workspace:
+  - create/list/soft-delete de-identified cases
+  - upload a supported biomarker list for a case
+  - store upload metadata and extracted symbols in D1
+  - run/re-run the Lenhard engine against D1 trial criteria
+  - persist computed trial matches in D1
+
+The UI requires an **active** account for cases and submissions. Pending
+accounts see a locked screen; unauthenticated visitors see sign-in,
+invited registration, and MFA confirmation forms.
+
+## Preserved UI capabilities
+
+- Case intake across **16 cancer types plus Rare**
+- Case filtering and the coverage grid
+- Clinical Dark / Light / System themes (persisted)
+- Four-step matching pipeline presentation
+- Trial-match cards and ranking table
+- Patient-summary export through **Copy**, **Download .txt**,
+  **Download .html**, and **Print/PDF**
+
+Important data note: the cancer types organize intake. Results are not
+generated from the old hosted runtime's per-cancer demo templates. They
+are computed from the uploaded biomarker symbols and the trial records
+actually stored in Cloudflare D1.
+
+## Supported uploads
+
+The production engine accepts UTF-8 `.txt`, `.csv`, `.tsv`, and `.json`
+biomarker lists up to 5 MB. Text formats contain one recognized symbol per
+line; JSON must contain only a `biomarkers` array. It rejects free text,
+patient details, extra columns/fields, and unknown symbols. Original file
+bytes are not stored.
+
+The earlier UI copy allowed PDF/VCF-style files and only catalogued their
+names. That behavior was not real parsing and has been removed from the
+production upload flow.
+
+## Build
+
+```bash
+npm install
+npm run typecheck
+npm run build
+CI=true npm run build
+```
+
+Vite uses `client/` as its root and writes static HTML/CSS/JS to
+`frontend/dist/`. The repository-level Cloudflare build copies that output
+into the Worker asset bundle:
+
+```bash
+npm run build:cloudflare
+```
 
 ## Layout
 
 ```text
 frontend/
-  client/            React app (Vite-style build via client/build.mjs)
-    src/             App.tsx, api.ts, main.tsx, theme.css, globals.d.ts
-    index.html
-    tsconfig.json
-  server/            Server actions and data layer for the original runtime
-    src/             actions.ts, schema.ts
-    tsconfig.json
-  drizzle/           SQL migrations for the app's data tables
-  package.json       Scripts and dependencies from the original runtime
-  tsconfig.base.json Shared TypeScript config
-  DATA-PLAN.md       Original data plan for the artifact
-  space.json         Hosted-runtime descriptor from the original artifact
+  client/          React application (Vite root)
+    src/App.tsx    Auth, submissions/review, cases, upload, results, export
+    src/api.ts     Fetch client for the Worker API
+    src/main.tsx   Standalone React Query setup
+  dist/            Generated production output (not committed)
+  package.json     Standalone npm dependencies and scripts
+  vite.config.ts   React + Tailwind Vite build
+  server/          Legacy hosted-runtime files, not used in production
 ```
 
-## Running / exploring it
-
-In its original hosted runtime the app was built with Bun 1.3
-(`packageManager: bun@1.3.10` in `package.json`):
-
-```bash
-bun install
-bun run build         # build:server + build:client
-bun run typecheck     # tsc --noEmit for client and server
-```
-
-## Caveats — read before trying to run this standalone
-
-1. **Hosted-runtime dependency.** `package.json` depends on
-   `@hatch/space-sdk` through a local `file:` path from the original hosted
-   runtime (`file:/opt/hatch/skills/spaces/ts-runtime/dist/space-sdk.tgz`).
-   That package is not published and is not in this repository, so a
-   standalone `install` will fail until the dependency is replaced or
-   stubbed. This PR lands the UI source for review and porting — it is not a
-   turnkey standalone app yet.
-2. **Not wired to this repo's engine yet.** The UI currently runs on its own
-   demo data and server actions (`server/src/actions.ts`); it does not call
-   this repository's matching engine API. Connecting the upload and
-   run-match flow to `engine/` is the intended follow-up work.
-
-## Provenance
-
-Snapshot of the "Oncology Biomarker Matcher" web artifact (slug
-`oncology-biomarker-matcher`), added so the front end can be reviewed,
-ported, and eventually integrated with the matching engine in this repo.
-Build outputs, `node_modules`, the local database, and the lockfile (which
-references local runtime paths) are intentionally not included.
+`frontend/server/src/actions.ts` no longer contains the original demo
+match templates or an SDK action layer. The production backend is
+`cloudflare/worker.js`; the canonical database schema is
+`cloudflare/schema.sql`.

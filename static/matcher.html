@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Biomarker Matcher — Biometric Screening Research</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header>
+    <p><a href="./index.html">← Static home</a></p>
+    <h1>Biomarker list matcher</h1>
+    <p class="muted">This static page calls the same production endpoint as the original prototype: <code>POST /api/upload</code>, backed by trials in D1.</p>
+  </header>
+  <main>
+    <section class="card">
+      <form id="upload-form">
+        <label for="research"><strong>Biomarker list</strong> (.txt, .csv, .tsv, or .json; one symbol per line; maximum 5 MB)</label>
+        <input id="research" name="research" type="file" accept=".txt,.csv,.tsv,.json" required>
+        <button type="submit">Find potential matches</button>
+      </form>
+      <p id="error" class="error" role="alert"></p>
+      <div id="results" aria-live="polite"></div>
+    </section>
+  </main>
+  <script src="./matcher.js" defer></script>
+</body>
+</html>

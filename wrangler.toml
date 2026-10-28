@@ -1,0 +1,19 @@
+# Precision Oncology — Cloudflare Worker configuration.
+#
+# IMPORTANT: replace the database_id value below on this actual config line
+# after creating the D1 database. Do not put API tokens or SESSION_SECRET in
+# this file; set secrets with Wrangler or the Cloudflare dashboard.
+name = "nv-genomic-trial-match"
+main = "cloudflare/worker.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+[assets]
+directory = "./cloudflare/dist"
+binding = "ASSETS"
+run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "oncology-db"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"

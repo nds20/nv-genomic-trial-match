@@ -7,7 +7,12 @@
   "scripts": {
     "start": "node server.js",
     "demo": "node index.js",
-    "test": "node --test"
+    "test": "node --test",
+    "build:frontend": "npm --prefix frontend run build",
+    "build:cloudflare": "npm run build:frontend && node cloudflare/prepare-assets.mjs",
+    "test:cloudflare": "node --test cloudflare/worker.test.mjs",
+    "dev:cloudflare": "npm run build:cloudflare && wrangler dev",
+    "deploy:cloudflare": "npm run build:cloudflare && wrangler deploy"
   },
   "dependencies": {
     "@azure/cosmos": "^4.3.0",
@@ -15,5 +20,8 @@
     "express-rate-limit": "^7.5.0",
     "helmet": "^8.0.0",
     "multer": "^2.0.2"
+  },
+  "devDependencies": {
+    "wrangler": "^4.154.0"
   }
 }

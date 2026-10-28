@@ -13,3 +13,10 @@ data/*.parquet
 !data/trials.json
 
 
+
+# Cloudflare / frontend build outputs
+.wrangler/
+cloudflare/dist/
+frontend/dist/
+frontend/.tsbuildinfo*
+frontend/client/.tsbuildinfo*
