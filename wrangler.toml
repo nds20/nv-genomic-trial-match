@@ -16,4 +16,4 @@ run_worker_first = ["/api/*"]
 [[d1_databases]]
 binding = "DB"
 database_name = "oncology-db"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "b149afca-7f1b-4e1f-b95d-ea89f2326ad9"
