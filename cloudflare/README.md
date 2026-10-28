@@ -136,10 +136,39 @@ set these only in your local terminal environment:
 BOOTSTRAP_ADMIN_NAME
 BOOTSTRAP_ADMIN_EMAIL
 BOOTSTRAP_ADMIN_PASSWORD
-BOOTSTRAP_ADMIN_NPI
-BOOTSTRAP_ADMIN_LICENSE_NUMBER
-BOOTSTRAP_ADMIN_LICENSE_STATE
 ```
+
+The NPI/license variables are **optional for this operator bootstrap**:
+
+```text
+BOOTSTRAP_ADMIN_NPI            (optional — see below)
+BOOTSTRAP_ADMIN_LICENSE_NUMBER (optional — see below)
+BOOTSTRAP_ADMIN_LICENSE_STATE  (optional — see below)
+```
+
+The operator who runs this one-time bootstrap is the platform's
+founder/administrator, not a clinician, so the NPI/license gate that
+applies to doctor accounts does not apply here. The three variables work
+as a group — either set all three or omit all three:
+
+- **All three omitted:** the admin is created with `NULL` for `npi`,
+  `license_number`, and `license_state`, with `npi_verification` set to
+  `operator_exempt` and a note recording why. Never invent an NPI or
+  license number for the operator account.
+- **All three set:** they are validated exactly as before (NPI = 10
+  digits, state = 2-letter code) and `BOOTSTRAP_NPI_VERIFICATION`
+  applies (`manual_review` by default).
+- **Only some set:** the script stops with an error naming the missing
+  variables.
+
+**One-time prerequisite for the no-NPI path:** databases created from
+the original `schema.sql` (including the production `oncology-db`)
+declared those three columns `NOT NULL`, so the `NULL` insert would be
+rejected. Run `cloudflare/migration-users-nullable.sql` once in the
+`oncology-db` D1 console **before** running the bootstrap script. It
+rebuilds the `users` table with only those three columns made nullable
+and preserves every existing row, column, and constraint. Skip it only
+if your `users` table already allows `NULL` in those columns.
 
 Then run:
 
@@ -152,6 +181,11 @@ once on the local terminal. Paste the SQL into the `oncology-db` D1 console
 and save the TOTP secret in an authenticator app. Do not commit or share
 the generated SQL or secret. The resulting account is active and MFA-
 confirmed, so it can sign in and issue the first invites.
+
+This exemption exists **only** in this operator bootstrap. Doctor
+accounts are still created exclusively through the invite flow and still
+require NPI verification (format/Luhn plus NPPES) and a state license
+before activation — nothing about doctor registration changes.
 
 ### 5. Configure the Cloudflare Git build
 
