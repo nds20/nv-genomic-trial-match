@@ -9,7 +9,7 @@
     "demo": "node index.js",
     "test": "node --test",
     "build:frontend": "npm --prefix frontend run build",
-    "build:cloudflare": "npm run build:frontend && node cloudflare/prepare-assets.mjs",
+    "build:cloudflare": "npm --prefix frontend ci --include=dev && npm run build:frontend && node cloudflare/prepare-assets.mjs",
     "test:cloudflare": "node --test cloudflare/worker.test.mjs",
     "dev:cloudflare": "npm run build:cloudflare && wrangler dev",
     "deploy:cloudflare": "npm run build:cloudflare && wrangler deploy"
