@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Precision oncology biomarker matching and invite-only doctor research submissions.">
+  <title>Biometric Screening Research — Static Pages</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header>
+    <p><strong>BIOMETRIC SCREENING RESEARCH</strong></p>
+    <h1>Precision Oncology Biomarker Matcher</h1>
+    <p class="muted">These dependency-free HTML5 pages are a public fallback and guide. The full clinician workspace is the React application served from the same Cloudflare Worker.</p>
+    <nav aria-label="Static pages">
+      <a class="button" href="/">Open the React workspace</a>
+      <a href="./matcher.html">Biomarker matcher</a>
+      <a href="./login.html">Doctor sign in</a>
+      <a href="./register.html">Invited registration</a>
+      <a href="./doctor-access.html">Doctor access</a>
+      <a href="./review-queue.html">Review queue</a>
+    </nav>
+  </header>
+  <main>
+    <section class="card">
+      <h2>How the platform works</h2>
+      <ol>
+        <li>An administrator invites a verified doctor; there is no public sign-up.</li>
+        <li>The doctor registers with an NPI and state license, confirms MFA, and waits for admin approval.</li>
+        <li>Research submissions always enter <code>pending_review</code>.</li>
+        <li>Only a reviewer or admin can approve research into the live dataset.</li>
+        <li>The Lenhard engine compares a strict biomarker list with trials stored in Cloudflare D1.</li>
+      </ol>
+    </section>
+    <section class="card">
+      <h2>Safety boundary</h2>
+      <p>Use de-identified biomarker symbols only. Do not upload patient records, free-text notes, or protected health information. This prototype is not a clinical decision-support system, does not determine eligibility, and is not certified as HIPAA compliant.</p>
+    </section>
+  </main>
+  <footer>Cloudflare Worker + D1 production path. The Node/Express application remains a local development backup.</footer>
+</body>
+</html>

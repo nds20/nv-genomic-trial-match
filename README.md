@@ -10,11 +10,11 @@ Three pieces, one repo:
 
 | Piece | Where | What it does |
 | --- | --- | --- |
-| Matching engine | `engine/` + `server.js` | The original Lenhard AI engine: accepts a biomarker list, compares it with trial criteria (local sample catalog or Azure Cosmos DB), and ranks matching trials. Wired into the running server. |
-| Clinician front end | `frontend/` | The Oncology Biomarker Matcher React UI (added in PR #2): research upload, the matching pipeline view, biomarker results across 16 cancer-type libraries, and a patient-summary export. Runs on demo data; **not yet wired to the engine or auth APIs**. |
+| Matching engine | `engine/` + `server.js` | The original Lenhard AI engine: accepts a biomarker list, compares it with trial criteria, and ranks matching trials. The Node server is a local backup; the Cloudflare Worker contains a Web API port backed by D1. |
+| Clinician front end | `frontend/` | The Oncology Biomarker Matcher React UI: standalone Vite build, doctor-auth flow, authenticated D1-backed cases/uploads, Lenhard trial results, 16 cancer-type intake categories plus Rare, and patient-summary export. |
 | Accounts & submissions | `auth/` + routes in `server.js` | Doctor login and research submission flow: invite-only accounts, NPI verification, mandatory MFA, role-based review queue, audit trail. The service layer is **mounted into `server.js`**: REST routes under `/api/auth` and `/api/submissions` run the full flow (see `auth/README.md` for the route table). |
 
-How they fit together: a doctor signs in through `auth/`, submits research (today via the API; the `frontend/` UI still runs on demo data — wiring it to these APIs is the next integration step), the submission waits in the review queue until a reviewer approves it, and only approved research reaches the engine's dataset.
+How they fit together on Cloudflare: a doctor signs in through the React UI, manages cases and submits research, the submission waits in the review queue until a reviewer approves it, and only approved research reaches the live dataset. The Node `auth/` module remains the local development implementation; `cloudflare/` is the production implementation.
 
 ## Run locally
 
@@ -25,22 +25,30 @@ npm install
 npm start
 ```
 
-Open `http://localhost:3000`. With no Cosmos DB settings, the app uses the sample catalog in `data/trials.json`.
+Open `http://localhost:3000`. The local Node backup uses the sample catalog in `data/trials.json` when Cosmos settings are absent; Cloudflare production uses D1.
 
 ## Front end: Oncology Biomarker Matcher (`frontend/`)
 
-A React + TypeScript UI (with a small Bun/TypeScript server layer) that began as a hosted web artifact and landed here as a source snapshot in PR #2. Full details live in `frontend/README.md`; in short it provides:
+A standalone React + TypeScript UI built with Vite and hosted as static
+assets by the Cloudflare Worker. It provides:
 
-- **Research upload and case intake** — de-identified case creation (cancer type, stage, histology, assay); drag-and-drop or browse for NGS reports, PDFs, and VCFs, or load sample files.
-- **AI matching pipeline view** — a four-step visualization: Ingest → Extract → Cross-Reference → Rank.
-- **Biomarker results** — cards (variant, VAF, classification, AI confidence, evidence level, matched therapy, trial count) across **16 cancer-type libraries (plus Rare)**, with a case filter and coverage grid, plus a therapy ranking table for tumor-board review.
-- **Clinical Dark theme** — Auto / Light / Clinical Dark toggle (persisted), with a deep navy-black, high-contrast palette.
-- **Patient-summary export** — a plain-language per-case summary with Copy, Download .txt, Download .html, and Print/PDF actions.
+- **Doctor access** — invite-only registration, NPPES verification flow,
+  mandatory TOTP MFA, pending-account locking, and admin invite/user tools.
+- **Research submissions and review** — submissions from the UI always
+  start as `pending_review`; reviewers/admins use the same UI to approve
+  or reject them.
+- **Case intake and upload** — de-identified cases across 16 cancer types
+  plus Rare; supported biomarker-list uploads are validated by the Worker
+  and analyzed against the D1 trial catalog.
+- **Trial results** — Lenhard engine results persisted in D1, with cards
+  and a ranking table.
+- **Clinical Dark theme** — Auto / Light / Clinical Dark toggle (persisted).
+- **Patient-summary export** — Copy, Download .txt, Download .html, and
+  Print/PDF actions.
 
-Status and caveats:
-
-- The UI currently runs on its own **demo data** and is labeled throughout as a demo mockup, **not for clinical use**. It is **not yet wired to this repo's engine API** (`/api/trials`, `/api/upload`); connecting the two is an integration step still to come.
-- Its `package.json` depends on `@hatch/space-sdk` via a local `file:` path from the original hosted runtime. That package is not published and is not in this repository, so a standalone install fails until the dependency is replaced or stubbed; the snapshot is here for review and porting. In its original runtime it was built with Bun 1.3: `bun install`, `bun run build`, `bun run typecheck` (run inside `frontend/`).
+Build it with `npm --prefix frontend install`, `npm --prefix frontend run
+typecheck`, and `npm --prefix frontend run build`. The old
+`@hatch/space-sdk` local dependency and Bun hosted runtime are gone.
 
 ## Doctor accounts and research submissions (`auth/`)
 
@@ -48,7 +56,7 @@ The access-control layer that keeps unverified accounts from messing up the data
 
 - **Invite-only accounts.** No public sign-up: an admin issues a single-use, expiring invite (only its SHA-256 hash is stored), and registration is impossible without one.
 - **NPI verification.** Registrants provide an NPI and a state license number/state. The NPI is checked locally (format + the CMS Luhn rule) and against the public **NPPES** registry API, including a rough name match. A registry outage degrades the account to manual review — never to approval.
-- **Mandatory MFA.** TOTP (RFC 6238) enrollment *and* confirmation are required before an admin can activate an account. Login is password (scrypt-hashed, per-user salt) + TOTP, with replay protection; sessions are signed, expiring, revocable tokens designed for httpOnly cookies.
+- **Mandatory MFA.** TOTP (RFC 6238) enrollment *and* confirmation are required before an admin can activate an account. Login is password + TOTP (the Node backup uses scrypt; the Cloudflare production path uses PBKDF2-HMAC-SHA256 with a per-user salt), with replay protection; sessions are signed, expiring, revocable tokens designed for httpOnly cookies.
 - **Roles.** `doctor` submits research and manages only their own submissions; `reviewer` approves/rejects submissions; `admin` manages invites and accounts. Nobody can review their own submission.
 - **Review queue.** Every submission lands as `pending_review`. Only a reviewer's approval puts it into the live dataset, and editing an approved submission sends it back through review.
 - **Audit trail, versioning, soft deletes.** Every mutation appends to an append-only audit log; edits bump a version counter and archive the prior content instead of overwriting; deletes only set a flag — records are retained.
@@ -57,45 +65,29 @@ Configuration: `SESSION_SECRET` (at least 16 characters; when unset the server g
 
 Mounted in `server.js`: REST routes under `/api/auth` (invites, register, MFA enroll/confirm, login/logout, me, admin user approval) and `/api/submissions` + `/api/review-queue` (create/list/edit/soft-delete, reviewer approve/reject), with the facade's role guards enforced and `AuthError` codes mapped to HTTP responses. The full route table is in `auth/README.md`; HTTP integration tests are in `server.auth.test.js`.
 
-Prototype limits, honestly stated: the store is a single JSON file (its interface is shaped so Azure Cosmos containers can replace it); invite delivery is manual — an admin shares the registration link, no email service is wired yet; the state license is collected but verified by the approving admin, not yet against state board databases. Remaining integration: wiring the `frontend/` UI to these APIs is the next PR.
+Prototype limits, honestly stated: the Node backup uses a single JSON file, while Cloudflare production persists auth data in D1; invite delivery is manual — an admin shares the registration link, no email service is wired yet; the state license is collected but verified by the approving admin, not yet against state board databases.
 
-## Set up Azure Cosmos DB
+## Cloudflare production deployment
 
-This app uses the **Azure Cosmos DB for NoSQL** API, not the MongoDB API. In Cosmos DB, the equivalent of a table is a **container**. The app expects one container containing trial documents.
+The production plan is now **Cloudflare for hosting, APIs, and data**:
 
-1. In the [Azure portal](https://portal.azure.com), choose **Create a resource** and select **Azure Cosmos DB for NoSQL**.
-2. Select your subscription and resource group, choose an account name and a region near your app, and enable the free tier if the option is available. The free tier must be selected when creating the account and is limited to one account per subscription. Check the [current free-tier terms](https://learn.microsoft.com/en-us/azure/cosmos-db/free-tier); free allowances and regional availability can change.
-3. After the account is deployed, open **Data Explorer** and create:
-   - Database ID: `nv-genomic-trial-match`
-   - Container ID: `trials`
-   - Partition key: `/id`
-4. In Data Explorer, open the `trials` container and use **New Item** to add each trial as a separate JSON document. For example:
+- Worker: `cloudflare/worker.js`, configured by root `wrangler.toml`
+- Database: Cloudflare D1, suggested name `oncology-db`, binding `DB`
+- Trial schema/seed: `cloudflare/schema.sql` and `cloudflare/seed.sql`
+- React assets: generated into the Worker asset bundle by
+  `npm run build:cloudflare`
+- Static HTML5 fallback: `static/`, served under `/static/`
+- Domain: attach `biometricscreeningresearch.net` as a Worker Custom Domain
 
-```text
-{
-  "id": "T-001",
-  "name": "Lung Cancer Study",
-  "requiredBiomarkers": ["EGFR"]
-}
-```
+Follow the exact operator checklist in `cloudflare/README.md`: create
+`oncology-db`, run schema then seed, replace `database_id` on the actual
+`wrangler.toml` config line, set `SESSION_SECRET` as a Worker secret,
+bootstrap the first admin directly in D1, configure the Git build, attach
+the domain, and verify `/api/health` and `/api/trials`.
 
-Repeat **New Item** for every trial, using a unique `id` for each one. The app will not copy the local sample trials into Cosmos automatically. It reads each document’s `id`, `name`, and `requiredBiomarkers` fields.
-
-5. In the Cosmos account, open **Keys** and copy the URI and a primary key. Keep the key private; it grants access to the account. For local testing, set the app’s environment variables in a PowerShell terminal:
-
-```powershell
-$env:COSMOS_ENDPOINT = "https://<account-name>.documents.azure.com:443/"
-$env:COSMOS_KEY = "<paste-the-primary-key-locally>"
-$env:COSMOS_DATABASE = "nv-genomic-trial-match"
-$env:COSMOS_CONTAINER = "trials"
-npm start
-```
-
-Use your actual account URI and key locally; do not paste the key into chat, source files, or GitHub. For a hosted app, put settings in the hosting platform’s protected configuration, not in the browser or repository. The current prototype uses a Cosmos account key; production should move to managed identity and least-privilege access.
-
-6. Open `http://localhost:3000/api/health`. It should report `"trialStore":"cosmos"`. Then open `http://localhost:3000/api/trials` and confirm your trial documents appear. Without all four Cosmos settings, the app uses the local sample catalog instead.
-
-For a small prototype, keep the account in one region and avoid enabling paid features or extra throughput until you understand their cost. Review Azure pricing and configure a budget alert; a budget alert notifies you but does not itself cap spending. `TRUST_PROXY=true` may be set when deployed behind a single trusted reverse proxy so upload throttling uses the client IP.
+Azure Cosmos instructions and configuration are no longer part of the
+production path. The Node `TrialRepository` remains only in the local
+development backup.
 
 ## Upload format and safeguards
 
@@ -107,7 +99,7 @@ The prototype accepts only UTF-8 `.txt`, `.csv`, `.tsv`, or `.json` biomarker li
 
 Uploads are held in memory for processing and are not stored or logged by this app. The engine rejects content outside this narrow format, caps file size, rate-limits upload attempts, and adds standard HTTP security headers. These safeguards reduce risk but cannot guarantee that data is de-identified or satisfy HIPAA by themselves.
 
-**Do not upload real patient information or protected health information.** The `auth/` module is now mounted into `server.js`, so doctor accounts, login and the submission review queue are live; the anonymous demo endpoints (`/api/upload`, `/api/trials`) remain unauthenticated and accept only de-identified biomarker lists. The platform has no HIPAA compliance certification. Before use with real clinical data, the deployment needs a documented risk analysis and appropriate administrative, physical, and technical safeguards, including identity/access management, an appropriate business associate agreement and Azure configuration, operational monitoring, and review by qualified privacy/compliance counsel. The matching output is for research exploration only; it is not proof of eligibility or medical advice.
+**Do not upload real patient information or protected health information.** The `auth/` module is now mounted into `server.js`, so doctor accounts, login and the submission review queue are live; the anonymous demo endpoints (`/api/upload`, `/api/trials`) remain unauthenticated and accept only de-identified biomarker lists. The platform has no HIPAA compliance certification. Before use with real clinical data, the deployment needs a documented risk analysis and appropriate administrative, physical, and technical safeguards, including identity/access management, an appropriate business associate agreement and Cloudflare configuration, operational monitoring, and review by qualified privacy/compliance counsel. The matching output is for research exploration only; it is not proof of eligibility or medical advice.
 
 ## Verify
 
