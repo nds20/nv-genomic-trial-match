@@ -20,3 +20,4 @@ database_id = "b149afca-7f1b-4e1f-b95d-ea89f2326ad9"
 
 [observability]
 enabled = false
+# Deploy retrigger 2026-10-29: retry the 824 Shield production build.
