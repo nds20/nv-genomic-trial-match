@@ -4,7 +4,7 @@
 # after creating the D1 database. Do not put API tokens or SESSION_SECRET in
 # this file; set secrets with Wrangler or the Cloudflare dashboard.
 name = "nv-genomic-trial-match"
-main = "cloudflare/worker.js"
+main = "cloudflare/shield-entry.js"
 compatibility_date = "2026-09-01"
 workers_dev = true
 
